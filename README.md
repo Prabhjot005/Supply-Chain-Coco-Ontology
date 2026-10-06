@@ -301,7 +301,96 @@ Replace `<LOCAL_PATH>` with your actual project path. Paths with spaces need sin
 
 The app auto-detects the user's Snowflake role and shows persona-appropriate pages.
 
-### Step 10: CoCo Automations
+The app is also the primary **interactive action surface** for the demo:
+
+- Every page includes a natural language query box at the bottom
+- Queries are routed through `SNOWFLAKE.CORTEX.DATA_AGENT_RUN` to `SUPPLY_CHAIN_DB.SCM.SUPPLY_CHAIN_AGENT`
+- Users can move from analytics to action in the same interface, for example:
+  - Ask for low-inventory parts and reorder recommendations
+  - Ask which shipments are delayed or critical
+  - Trigger follow-up actions such as PO creation or shipment expediting after confirmation
+
+**Verify:**
+
+- Open the app as different roles and confirm the page list changes by persona
+- Confirm charts load from the DT/view layer
+- Ask a natural language question such as `What is the OTD for Supplier Acme?`
+- Ask an action-oriented question such as `Which parts should I reorder?` and confirm the agent returns a governed recommendation
+
+### Step 10: Action Workflows
+
+The solution includes governed **action workflows** so agents can do more than answer questions. These workflows combine Snowflake-side guardrails with agent-side orchestration.
+
+#### 10A. Deploy the workflow tools
+
+Before testing actions, ensure these files from `06_custom_tools/` are deployed:
+
+- `01_generate_scorecard.sql`
+- `02_create_purchase_order.sql`
+- `03_trigger_expedite.sql`
+- `04_update_supplier_rating.sql`
+- `05_update_alert_jira.sql`
+
+These tools support the main action flows:
+
+- **Supplier evaluation:** `GENERATE_SCORECARD`
+- **Reorder / purchase order creation:** `CREATE_PURCHASE_ORDER`
+- **Shipment or order escalation:** `TRIGGER_EXPEDITE`
+- **Supplier governance:** `UPDATE_SUPPLIER_RATING`
+- **Jira alert linking:** `UPDATE_ALERT_JIRA`
+
+#### 10B. Understand the workflow split
+
+The implementation intentionally separates responsibilities:
+
+- **Stored procedures / UDFs** enforce validation, business rules, duplicate checks, budget limits, escalation caps, and structured DB-side responses
+- **Agents** decide when to invoke tools, request explicit user confirmation before writes, and orchestrate external actions through Jira / Slack / Gmail MCP servers
+
+This keeps the system governed: the database owns the transaction logic, and the agent owns the cross-tool workflow.
+
+#### 10C. Validate the main workflows
+
+**1. Reorder / purchase order workflow**
+
+- User asks for low-inventory or reorder recommendations in Snowsight or the Streamlit app
+- Agent analyzes `DT_INVENTORY_POSITION`, may incorporate demand context, recommends supplier + quantity
+- User confirms the proposal
+- Agent calls `CREATE_PURCHASE_ORDER`
+- Optional Jira / Slack follow-up is orchestrated at the agent layer
+
+Example guardrail test:
+
+```sql
+CALL SUPPLY_CHAIN_DB.SCM.CREATE_PURCHASE_ORDER('P100', 'S01', 'PL01', 100, 'test reorder');
+```
+
+**2. Expedite workflow**
+
+- User asks to expedite a shipment or order
+- Agent evaluates urgency using shipment / order context
+- User confirms
+- Agent calls `TRIGGER_EXPEDITE`
+- Agent creates a Jira ticket, updates the alert via `UPDATE_ALERT_JIRA`, and posts to Slack
+
+Example request in the app or agent surface:
+
+- `Expedite shipment SH011`
+- `Show critical shipments and expedite the highest-risk one`
+
+**3. Supplier rating workflow**
+
+- Procurement agent reviews supplier scorecard trends
+- Agent recommends a rating update only with justification
+- User confirms
+- Agent calls `UPDATE_SUPPLIER_RATING`
+
+#### 10D. Expected behavior
+
+- All writes require explicit confirmation
+- Guardrail failures are returned as structured responses such as `ERROR:` or `GUARDRAIL_DUPLICATE:`
+- If Slack or another MCP integration fails, the core Snowflake action can still succeed (graceful degradation)
+
+### Step 11: CoCo Automations
 
 Requires **Snowflake CoCo** (CLI or Desktop). Run from the project root directory:
 
