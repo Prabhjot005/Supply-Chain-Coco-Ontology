@@ -429,58 +429,78 @@ if prompt := st.chat_input("e.g., What is the OTD for Supplier Acme?"):
             try:
                 MAX_HISTORY = 10  # keep last 10 messages (5 turns)
                 recent_history = st.session_state.chat_history[-MAX_HISTORY:]
-                messages = []
-                # Prepend persona context so the router agent knows which sub-agent to favor
+
+                # Build single user message with persona + conversation context
                 persona_context = {
                     "Procurement": "I am a Procurement Manager. Focus on supplier performance, landed cost, and purchase orders.",
                     "Planning": "I am a Planning Analyst. Focus on inventory health, demand forecasts, and fulfillment risk.",
                     "Logistics": "I am a Logistics Coordinator. Focus on shipment tracking, delays, carrier OTD, and expedites.",
                     "Admin": "I am an Admin with full access to all supply chain data."
                 }
-                messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": persona_context.get(persona, persona_context["Admin"])}]
-                })
-                messages.append({
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": f"Understood. I'll tailor my responses for your {persona} role."}]
-                })
-                for msg in recent_history:
-                    messages.append({
-                        "role": msg["role"],
-                        "content": [{"type": "text", "text": msg["content"]}]
-                    })
-                messages_json = json.dumps({"messages": messages})
-                # Escape $$ inside content to prevent breaking the SQL dollar-quoting
-                messages_json = messages_json.replace("$$", "\\$\\$").replace("'", "''")
 
-                result = session.sql(f"""
+                # Combine context + history into one message
+                parts = [persona_context.get(persona, persona_context["Admin"])]
+                if len(recent_history) > 1:
+                    parts.append("\n--- Previous conversation ---")
+                    for msg in recent_history[:-1]:
+                        role_label = "User" if msg["role"] == "user" else "Assistant"
+                        parts.append(f"{role_label}: {msg['content']}")
+                    parts.append("--- End of previous conversation ---\n")
+                # Current question is the last item in history
+                parts.append(f"Current question: {recent_history[-1]['content']}")
+
+                combined_message = "\n".join(parts)
+                payload = json.dumps({"messages": [{"role": "user", "content": [{"type": "text", "text": combined_message}]}]})
+                payload = payload.replace("$$", "\\$\\$").replace("'", "''")
+
+                row = session.sql(f"""
                     SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(
                         'SUPPLY_CHAIN_DB.SCM.SUPPLY_CHAIN_AGENT',
-                        $${messages_json}$$,
+                        $${payload}$$,
                         TRUE
                     ) AS response
-                """).collect()[0]['RESPONSE']
+                """).collect()[0]
 
-                response_json = json.loads(result)
-                # Handle both v1 (content at top level) and v2 (content nested) response formats
-                content = response_json.get('content', [])
-                if not content and 'message' in response_json:
-                    content = response_json['message'].get('content', [])
-                text_parts = []
-                for item in content:
-                    if isinstance(item, dict) and item.get('type') == 'text' and item.get('text'):
-                        text_parts.append(item['text'])
-                    elif isinstance(item, str):
-                        text_parts.append(item)
-                answer = "\n\n".join(text_parts).strip()
+                # Get raw value by index to avoid column name issues
+                raw = row[0]
 
-                if not answer:
-                    answer = "I received a response but couldn't extract a text answer. Please try rephrasing your question."
+                # Parse response — keep decoding until we get a dict
+                parsed = raw
+                for _ in range(10):
+                    if isinstance(parsed, dict):
+                        break
+                    try:
+                        parsed = json.loads(parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        break
+
+                if not isinstance(parsed, dict):
+                    st.error(f"Debug: raw type={type(raw).__name__}, parsed type={type(parsed).__name__}, preview={str(raw)[:500]}")
+                    answer = "Agent returned an unexpected response format. Check logs."
+                else:
+                    # Extract text from content array
+                    content = parsed.get('content', [])
+                    if not content and 'message' in parsed:
+                        msg = parsed['message']
+                        if isinstance(msg, dict):
+                            content = msg.get('content', [])
+                        elif isinstance(msg, str):
+                            content = [{"type": "text", "text": msg}]
+                    text_parts = []
+                    for item in content:
+                        if isinstance(item, dict) and item.get('type') == 'text' and item.get('text'):
+                            text_parts.append(item['text'])
+                        elif isinstance(item, str):
+                            text_parts.append(item)
+                    answer = "\n\n".join(text_parts).strip()
+
+                    if not answer:
+                        answer = "I received a response but couldn't extract a text answer. Please try rephrasing your question."
 
                 st.markdown(answer)
                 st.session_state.chat_history.append({"role": "assistant", "content": answer})
             except Exception as e:
-                error_msg = f"Error: {str(e)}"
+                import traceback
+                error_msg = f"Error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
                 st.error(error_msg)
-                st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
+                st.session_state.chat_history.append({"role": "assistant", "content": f"Error: {str(e)}"})
