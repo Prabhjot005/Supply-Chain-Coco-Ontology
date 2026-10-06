@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>Supply Chain Ontology &amp; Governed Conversational Analytics</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-10-06",
+    "intent": "CoCo CLI Hackathon GCC Edition - Prototype Submission Deck",
+    "sections": [
+      { "id": "problem", "title": "Problem Statement", "dataSources": [], "producerNotes": "Static content describing the business problem." },
+      { "id": "solution", "title": "Solution Overview", "dataSources": [], "producerNotes": "Ontology design and canonical metrics." },
+      { "id": "architecture", "title": "Architecture", "dataSources": [], "producerNotes": "Mermaid diagrams of system architecture." },
+      { "id": "agents", "title": "Multi-Agent Orchestration", "dataSources": [], "producerNotes": "Agent routing and workflow details." },
+      { "id": "governance", "title": "Governance & Trust", "dataSources": [], "producerNotes": "RBAC, masking, guardrails." },
+      { "id": "consistency", "title": "Consistency Proof", "dataSources": [], "producerNotes": "Same metric across personas." },
+      { "id": "coco-lifecycle", "title": "CoCo Usage Across Lifecycle", "dataSources": [], "producerNotes": "CoCo in planning, dev, execution, testing." },
+      { "id": "surfaces", "title": "Live Surfaces", "dataSources": [], "producerNotes": "Streamlit, automations, CLI." },
+      { "id": "impact", "title": "Impact & Ingenuity", "dataSources": [], "producerNotes": "Measurable outcomes and CoCo features." }
+    ]
+  }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+      max-width: 960px; width: 100%; margin: 0 auto;
+      padding: clamp(16px, 4vw, 32px);
+      color: light-dark(#1e293b, #e2e8f0);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.6;
+    }
+
+    /* --- Cover --- */
+    .cover {
+      text-align: center; padding: 48px 24px 40px;
+      border-bottom: 3px solid #29b5e8; margin-bottom: 40px;
+    }
+    .cover h1 { font-size: clamp(24px, 4vw, 36px); color: #29b5e8; margin-bottom: 8px; letter-spacing: -0.5px; }
+    .cover .subtitle { font-size: clamp(14px, 2.2vw, 18px); color: light-dark(#64748b, #94a3b8); margin-bottom: 20px; }
+    .cover .tagline {
+      font-size: clamp(16px, 2.5vw, 22px); font-weight: 700;
+      color: light-dark(#0f172a, #f1f5f9); margin-bottom: 24px;
+      background: light-dark(#eff6ff, #1e3a5f); display: inline-block;
+      padding: 8px 24px; border-radius: 8px; border-left: 4px solid #29b5e8;
+    }
+    .cover .meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 24px; font-size: 14px; color: light-dark(#475569, #cbd5e1); }
+    .cover .meta span { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* --- Section Headers --- */
+    .section-divider { display: flex; align-items: center; gap: 12px; margin: 48px 0 24px; page-break-before: always; }
+    .section-divider .num {
+      background: #29b5e8; color: #fff; font-weight: 700;
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0;
+    }
+    .section-divider h2 { font-size: clamp(20px, 3vw, 26px); color: light-dark(#0f172a, #f1f5f9); }
+
+    h3 { font-size: 17px; color: #29b5e8; margin: 24px 0 10px; border-left: 3px solid #29b5e8; padding-left: 10px; }
+    p, li { font-size: 14px; margin-bottom: 6px; }
+    ul { padding-left: 20px; margin: 8px 0 16px; }
+    li { margin-bottom: 4px; }
+    strong { color: light-dark(#0f172a, #f8fafc); }
+
+    /* --- Cards --- */
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 16px 0; }
+    .card { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; padding: 16px; }
+    .card .card-title { font-weight: 700; font-size: 14px; color: #29b5e8; margin-bottom: 6px; }
+    .card p, .card li { font-size: 13px; }
+
+    /* --- Highlight Box --- */
+    .highlight { background: light-dark(#eff6ff, #1e3a5f); border-left: 4px solid #29b5e8; padding: 14px 18px; border-radius: 0 6px 6px 0; margin: 16px 0; font-size: 14px; }
+    .highlight.green { background: light-dark(#f0fdf4, #14532d); border-left-color: #22c55e; }
+    .highlight.amber { background: light-dark(#fffbeb, #451a03); border-left-color: #f59e0b; }
+    .highlight.red { background: light-dark(#fef2f2, #450a0a); border-left-color: #ef4444; }
+
+    /* --- Tables --- */
+    .table-wrap { overflow-x: auto; margin: 12px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 8px 12px; text-align: left; }
+    th { background: light-dark(#f1f5f9, #1e293b); font-weight: 600; color: light-dark(#0f172a, #e2e8f0); }
+
+    /* --- Tags --- */
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .tag { background: light-dark(#dbeafe, #1e3a5f); color: light-dark(#1e40af, #93c5fd); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 12px; }
+    .tag.green { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); }
+    .tag.amber { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fcd34d); }
+    .tag.pink { background: light-dark(#fce7f3, #831843); color: light-dark(#9d174d, #f9a8d4); }
+
+    /* --- Metrics --- */
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin: 16px 0; }
+    .metric { text-align: center; padding: 16px; background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; }
+    .metric .val { font-size: 28px; font-weight: 700; color: #29b5e8; }
+    .metric .label { font-size: 12px; color: light-dark(#64748b, #94a3b8); margin-top: 4px; }
+
+    /* --- Flow --- */
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; font-size: 13px; font-weight: 600; }
+    .flow .step { background: light-dark(#dbeafe, #1e3a5f); color: light-dark(#1e40af, #93c5fd); padding: 6px 14px; border-radius: 6px; }
+    .flow .arrow { color: light-dark(#94a3b8, #64748b); font-size: 18px; }
+
+    /* --- Before/After --- */
+    .before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+    .before-after .before { background: light-dark(#fef2f2, #450a0a); border: 1px solid light-dark(#fca5a5, #7f1d1d); border-radius: 8px; padding: 16px; }
+    .before-after .after { background: light-dark(#f0fdf4, #14532d); border: 1px solid light-dark(#86efac, #166534); border-radius: 8px; padding: 16px; }
+    .before-after .label { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+    .before-after .before .label { color: light-dark(#dc2626, #fca5a5); }
+    .before-after .after .label { color: light-dark(#16a34a, #86efac); }
+    .before-after p, .before-after li { font-size: 13px; }
+
+    /* --- Lifecycle Grid --- */
+    .lifecycle { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }
+    .lifecycle .phase { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; padding: 16px; }
+    .lifecycle .phase .phase-title { font-weight: 700; font-size: 14px; color: #29b5e8; margin-bottom: 8px; border-bottom: 2px solid #29b5e8; padding-bottom: 4px; }
+    .lifecycle .phase li { font-size: 12px; margin-bottom: 4px; }
+
+    /* --- Checklist --- */
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { padding: 6px 0 6px 28px; position: relative; font-size: 14px; }
+    .checklist li::before { content: "\2713"; position: absolute; left: 4px; color: #22c55e; font-weight: 700; font-size: 16px; }
+
+    /* --- Consistency Proof --- */
+    .proof-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+    .proof-card { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; padding: 16px; text-align: center; }
+    .proof-card .persona { font-weight: 700; font-size: 14px; color: #29b5e8; margin-bottom: 4px; }
+    .proof-card .question { font-size: 12px; color: light-dark(#64748b, #94a3b8); font-style: italic; margin-bottom: 8px; }
+    .proof-card .answer { font-size: 24px; font-weight: 700; color: #22c55e; }
+    .proof-card .source { font-size: 11px; color: light-dark(#94a3b8, #64748b); margin-top: 4px; }
+
+    /* --- Footer --- */
+    .footer { text-align: center; padding: 32px 0 16px; border-top: 2px solid light-dark(#e2e8f0, #334155); margin-top: 48px; font-size: 13px; color: light-dark(#94a3b8, #64748b); }
+
+    code { background: light-dark(#f1f5f9, #1e293b); padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+    img, svg { max-width: 100%; height: auto; }
+
+    @media (max-width: 600px) {
+      .before-after, .proof-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Fallback for browsers that do not support light-dark() */
+    @supports not (color: light-dark(#000, #fff)) {
+      body { color: #1e293b; background: #ffffff; }
+      strong { color: #0f172a; }
+      .section-divider h2 { color: #0f172a; }
+      .card { background: #f8fafc; border-color: #e2e8f0; }
+      .highlight { background: #eff6ff; }
+      .highlight.green { background: #f0fdf4; }
+      .highlight.amber { background: #fffbeb; }
+      .highlight.red { background: #fef2f2; }
+      th { background: #f1f5f9; color: #0f172a; }
+      th, td { border-color: #d1d5db; }
+      .cover .subtitle { color: #64748b; }
+      .cover .meta { color: #475569; }
+      .metric .label { color: #64748b; }
+      .tag { background: #dbeafe; color: #1e40af; }
+      .tag.green { background: #dcfce7; color: #166534; }
+      .tag.amber { background: #fef3c7; color: #92400e; }
+      .tag.pink { background: #fce7f3; color: #9d174d; }
+      .before-after .before { background: #fef2f2; border-color: #fca5a5; }
+      .before-after .after { background: #f0fdf4; border-color: #86efac; }
+      .before-after .before .label { color: #dc2626; }
+      .before-after .after .label { color: #16a34a; }
+      .flow .step { background: #dbeafe; color: #1e40af; }
+      .flow .arrow { color: #94a3b8; }
+      .proof-card { background: #f8fafc; border-color: #e2e8f0; }
+      .proof-card .question { color: #64748b; }
+      .proof-card .source { color: #94a3b8; }
+      .lifecycle .phase { background: #f8fafc; border-color: #e2e8f0; }
+      .footer { border-top-color: #e2e8f0; color: #94a3b8; }
+      .metric { background: #f8fafc; border-color: #e2e8f0; }
+      code { background: #f1f5f9; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===================== COVER ===================== -->
+<div class="cover">
+  <h1>Supply Chain Ontology &amp; Governed Conversational Analytics</h1>
+  <p class="subtitle">CoCo CLI Hackathon GCC Edition &mdash; Prototype Submission</p>
+  <div class="tagline">One ontology. One answer. Any persona.</div>
+  <div class="meta">
+    <span><strong>Team:</strong> Prabhjot Kaur (Solo)</span>
+    <span><strong>Platform:</strong> Snowflake + CoCo CLI</span>
+    <span><strong>Built 100% with CoCo</strong></span>
+  </div>
+  <div class="metrics" style="margin-top: 28px;">
+    <div class="metric"><div class="val">52+</div><div class="label">Snowflake Objects</div></div>
+    <div class="metric"><div class="val">4</div><div class="label">Cortex Agents</div></div>
+    <div class="metric"><div class="val">5</div><div class="label">Reusable Skills</div></div>
+    <div class="metric"><div class="val">3</div><div class="label">MCP Connectors</div></div>
+    <div class="metric"><div class="val">3</div><div class="label">CoCo Automations</div></div>
+    <div class="metric"><div class="val">1</div><div class="label">Semantic Ontology</div></div>
+  </div>
+</div>
+
+<!-- ===================== 1. PROBLEM STATEMENT ===================== -->
+<div class="section-divider" id="problem">
+  <div class="num">1</div>
+  <h2>The Problem</h2>
+</div>
+
+<h3>Same Question, Different Answers</h3>
+<p>Supply chain teams &mdash; <strong>procurement, planning, and logistics</strong> &mdash; query the same data but calculate metrics differently. OTD%, fill rate, DOI, and landed cost get computed inconsistently across spreadsheets, BI tools, and ad-hoc SQL.</p>
+
+<div class="before-after">
+  <div class="before">
+    <div class="label">Before: Fragmented</div>
+    <ul>
+      <li>Each team defines OTD% with a different formula</li>
+      <li>Conflicting reports in every standup</li>
+      <li>30-60 min manual morning report prep per team</li>
+      <li>No governed source of truth</li>
+      <li>Zero automated alerting</li>
+    </ul>
+  </div>
+  <div class="after">
+    <div class="label">After: Governed Ontology</div>
+    <ul>
+      <li>4 canonical metrics locked in a semantic view</li>
+      <li>Same formula resolves identically for everyone</li>
+      <li>Automated daily briefs via email + Slack</li>
+      <li>Agents ACT: create POs, expedite, file Jira</li>
+      <li>Full RBAC + column masking per persona</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Target Personas</h3>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">Procurement Manager</div>
+    <p>Supplier scorecards, landed cost trends, reorder decisions, PO creation with cost justification.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Planning Analyst</div>
+    <p>Inventory health, demand forecasts (ML), fulfillment risk scoring, stock gap analysis.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">Logistics Coordinator</div>
+    <p>Shipment tracking, delay detection, carrier OTD%, expedite management with Jira + Slack alerts.</p>
+  </div>
+</div>
+
+<!-- ===================== 2. SOLUTION OVERVIEW ===================== -->
+<div class="section-divider" id="solution">
+  <div class="num">2</div>
+  <h2>The Ontology Approach</h2>
+</div>
+
+<h3>Entity-Relationship Model</h3>
+<pre class="mermaid">
+erDiagram
+    SUPPLIER ||--o{ SHIPMENT : "ships via"
+    SHIPMENT ||--|{ SHIPMENT_LINE : "contains"
+    SHIPMENT_LINE }o--|| PART : "for part"
+    SHIPMENT }o--|| PLANT : "delivered to"
+    CUSTOMER ||--o{ ORDER : "places"
+    ORDER ||--|{ ORDER_LINE : "contains"
+    ORDER_LINE }o--|| PART : "for part"
+    ORDER }o--|| PLANT : "fulfilled by"
+    PLANT ||--o{ INVENTORY : "stocks"
+    INVENTORY }o--|| PART : "of part"
+</pre>
+<p>The ontological backbone: <code>Supplier &rarr; Part &rarr; Plant &rarr; Shipment &rarr; Order &rarr; Customer</code>. Every metric traces back to this entity chain.</p>
+
+<h3>4 Canonical Metrics &mdash; Locked in the Semantic View</h3>
+<div class="metrics">
+  <div class="metric"><div class="val" style="font-size:20px;">OTD%</div><div class="label">on_time / total &times; 100<br>Source: DT_DELIVERY_PERF</div></div>
+  <div class="metric"><div class="val" style="font-size:20px;">Fill Rate%</div><div class="label">fulfilled / ordered &times; 100<br>Source: V_ORDER_FULFILLMENT</div></div>
+  <div class="metric"><div class="val" style="font-size:20px;">DOI</div><div class="label">on_hand / daily_demand<br>Source: DT_INVENTORY_POSITION</div></div>
+  <div class="metric"><div class="val" style="font-size:20px;">Landed Cost</div><div class="label">material + freight + duty<br>Source: DT_LANDED_COST</div></div>
+</div>
+
+<div class="highlight green">
+  <strong>SUPPLY_CHAIN_ONTOLOGY</strong> semantic view: 11 logical entities, 8 relationships, 14 verified queries, 4 canonical metrics. Built with <code>SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML</code> (868 lines). Cortex Analyst enforces the formula &mdash; no one can redefine OTD%.
+</div>
+
+<!-- ===================== 3. ARCHITECTURE ===================== -->
+<div class="section-divider" id="architecture">
+  <div class="num">3</div>
+  <h2>Architecture</h2>
+</div>
+
+<h3>End-to-End Data Flow</h3>
+<pre class="mermaid">
+flowchart TD
+    subgraph SRC["DATA LAYER &mdash; 10 Base Tables"]
+        S1[Suppliers] --- S2[Parts]
+        S2 --- S3[Plants]
+        S3 --- S4[Customers]
+        S4 --- S5[Inventory]
+        S5 --- S6[Shipments + Lines]
+        S6 --- S7[Orders + Lines]
+        S7 --- S8[Alerts]
+    end
+
+    subgraph PIPE["PIPELINE LAYER"]
+        DT1[DT_Delivery_Perf]
+        DT2[DT_Inventory_Position]
+        DT3[DT_Landed_Cost]
+        DT4[DT_Order_Fulfillment]
+        V1["V_Order_Fulfillment
+        risk scores via CURRENT_DATE"]
+        ST1[3 CDC Streams]
+        TK1[3 Alert Tasks]
+        ML1[ML FORECAST Model]
+    end
+
+    subgraph SEM["SEMANTIC LAYER"]
+        SV["SUPPLY_CHAIN_ONTOLOGY
+        11 entities | 8 joins | 14 VQRs
+        4 canonical metrics"]
+    end
+
+    subgraph AGENTS["AGENT LAYER &mdash; 4 Cortex Agents"]
+        PRIMARY["SUPPLY_CHAIN_AGENT
+        Router + MCP"]
+        PA["PROCUREMENT_AGENT
+        3 skills | 3 tools"]
+        PLA["PLANNING_AGENT
+        2 skills | Slack MCP"]
+        LA["LOGISTICS_AGENT
+        1 skill | 2 tools + MCP"]
+    end
+
+    subgraph MCP["MCP LAYER &mdash; 3 Connectors"]
+        JIRA["Atlassian Jira
+        SCRUM project"]
+        GMAIL["Gmail
+        email delivery"]
+        SLACK["Slack
+        #supply-chain-alerts"]
+    end
+
+    subgraph SURFACE["SURFACE LAYER"]
+        CS["Snowsight
+        Cloud Agents"]
+        SIS["Streamlit
+        9-page dashboard"]
+        CLI["CoCo CLI
+        and Desktop"]
+        AUTO["3 CoCo
+        Automations"]
+    end
+
+    SRC --> PIPE
+    DT4 --> V1
+    ST1 --> TK1
+    PIPE --> SEM
+    SEM --> AGENTS
+    PRIMARY --> PA
+    PRIMARY --> PLA
+    PRIMARY --> LA
+    AGENTS --> MCP
+    AGENTS --> SURFACE
+    AUTO --> GMAIL
+    AUTO --> SLACK
+
+    style SRC fill:#1e3a5f,stroke:#29b5e8,color:#e2e8f0
+    style PIPE fill:#14532d,stroke:#22c55e,color:#e2e8f0
+    style SEM fill:#312e81,stroke:#818cf8,color:#e2e8f0
+    style AGENTS fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style MCP fill:#881337,stroke:#fb7185,color:#e2e8f0
+    style SURFACE fill:#1e293b,stroke:#64748b,color:#e2e8f0
+</pre>
+
+<h3>Pipeline Details</h3>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">4 INCREMENTAL Dynamic Tables</div>
+    <p>Delivery perf, inventory position, landed cost, order fulfillment. 1-hour target lag. Automatic refresh.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">DT + View Split (Design Decision)</div>
+    <p><code>CURRENT_DATE()</code> blocks INCREMENTAL refresh. DT stores raw data; <strong>V_ORDER_FULFILLMENT</strong> computes 4-factor risk scores (0-12) at query time.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">3 CDC Streams + 3 Tasks</div>
+    <p>Event-driven alerts: shipment delays, low inventory, order risk. Tasks poll every 5 min via <code>SYSTEM$STREAM_HAS_DATA</code>.</p>
+  </div>
+  <div class="card">
+    <div class="card-title">ML FORECAST Model</div>
+    <p>Multi-series demand forecasting. 30-day projections with confidence intervals. Staleness checks built into the demand_planner skill.</p>
+  </div>
+</div>
+
+<!-- ===================== 4. MULTI-AGENT ORCHESTRATION ===================== -->
+<div class="section-divider" id="agents">
+  <div class="num">4</div>
+  <h2>Multi-Agent Orchestration</h2>
+</div>
+
+<h3>Agent Routing</h3>
+<pre class="mermaid">
+flowchart LR
+    USER[User Query] --> PRIMARY["SUPPLY_CHAIN_AGENT
+    Router"]
+    PRIMARY -->|"supplier, cost, reorder"| PROC["PROCUREMENT_AGENT
+    supplier_scorecard
+    cost_analyzer
+    reorder_advisor"]
+    PRIMARY -->|"demand, inventory, forecast"| PLAN["PLANNING_AGENT
+    demand_planner
+    reorder_advisor"]
+    PRIMARY -->|"shipment, delay, expedite"| LOGI["LOGISTICS_AGENT
+    shipment_tracker"]
+    PROC --> JIRA[Jira MCP]
+    PROC --> SLACK1[Slack MCP]
+    LOGI --> JIRA2[Jira MCP]
+    LOGI --> SLACK2[Slack MCP]
+    PLAN --> SLACK3[Slack MCP]
+    PRIMARY --> GMAIL[Gmail MCP]
+
+    style PRIMARY fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style PROC fill:#1e3a5f,stroke:#29b5e8,color:#e2e8f0
+    style PLAN fill:#14532d,stroke:#22c55e,color:#e2e8f0
+    style LOGI fill:#451a03,stroke:#f59e0b,color:#e2e8f0
+</pre>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Agent</th><th>Role</th><th>Skills</th><th>Custom Tools</th><th>MCP Servers</th></tr></thead>
+  <tbody>
+    <tr><td><strong>SUPPLY_CHAIN_AGENT</strong></td><td>Primary Router</td><td>&mdash; (delegates via agent_toolset)</td><td>All 5 tools + data_to_chart</td><td>Jira + Gmail + Slack</td></tr>
+    <tr><td><strong>PROCUREMENT_AGENT</strong></td><td>Supplier &amp; Cost</td><td>supplier_scorecard, cost_analyzer, reorder_advisor</td><td>GENERATE_SCORECARD, CREATE_PURCHASE_ORDER, UPDATE_SUPPLIER_RATING</td><td>Jira + Gmail + Slack</td></tr>
+    <tr><td><strong>PLANNING_AGENT</strong></td><td>Demand &amp; Inventory</td><td>demand_planner, reorder_advisor</td><td>Cortex Analyst only</td><td>Slack</td></tr>
+    <tr><td><strong>LOGISTICS_AGENT</strong></td><td>Shipment &amp; Expedite</td><td>shipment_tracker</td><td>TRIGGER_EXPEDITE, UPDATE_ALERT_JIRA</td><td>Jira + Gmail + Slack</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Expedite Workflow &mdash; End-to-End with MCP</h3>
+<div class="flow">
+  <div class="step">User: "Expedite SH011"</div><div class="arrow">&rarr;</div>
+  <div class="step">TRIGGER_EXPEDITE (guardrails + DB)</div><div class="arrow">&rarr;</div>
+  <div class="step">Jira MCP (create ticket)</div><div class="arrow">&rarr;</div>
+  <div class="step">UPDATE_ALERT_JIRA (link ticket)</div><div class="arrow">&rarr;</div>
+  <div class="step">Slack MCP (#supply-chain-alerts)</div><div class="arrow">&rarr;</div>
+  <div class="step">Confirm to user</div>
+</div>
+<div class="highlight">
+  <strong>Clean separation:</strong> SPs handle guardrails + DB writes. Agents orchestrate MCP calls (Jira, Slack, Gmail). SPs cannot call MCP, so the agent is the workflow conductor. If Slack fails, the DB write and Jira ticket still succeed &mdash; graceful degradation.
+</div>
+
+<h3>Custom Tools &amp; Function Calling</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Tool</th><th>Type</th><th>Action</th><th>Guardrails</th></tr></thead>
+  <tbody>
+    <tr><td>GENERATE_SCORECARD</td><td>UDF (read)</td><td>Composite supplier score 0-10 (OTD 40%, Quality 30%, Cost 30%)</td><td>Read-only, no side effects</td></tr>
+    <tr><td>CREATE_PURCHASE_ORDER</td><td>SP (write)</td><td>Creates PO with generated ID + Jira + Slack</td><td>Part/supplier validation, 3x qty sanity, $50K budget cap, 7-day duplicate check</td></tr>
+    <tr><td>UPDATE_SUPPLIER_RATING</td><td>SP (write)</td><td>Changes supplier rating + Slack alert</td><td>Max 1-tier change, requires reason, audit trail</td></tr>
+    <tr><td>TRIGGER_EXPEDITE</td><td>SP (write)</td><td>Expedites shipment/order + Jira + Slack</td><td>48h duplicate check, 3x escalation cap, user confirmation</td></tr>
+    <tr><td>UPDATE_ALERT_JIRA</td><td>SP (write)</td><td>Links Jira ticket key to alert record</td><td>Checks open alert exists without ticket</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Reusable Skills &mdash; 5 Domain-Specific Instruction Sets</h3>
+<p>Skills are <strong>declarative instruction sets</strong> (Markdown files) that give each agent a repeatable, multi-step playbook for a specific domain task. The agent loads the skill, follows its steps in order, and applies its guardrails &mdash; no ad-hoc prompting required.</p>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Skill</th><th>Used By</th><th>Core Mechanism</th><th>Key Guardrails</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>supplier_scorecard</strong></td>
+      <td>Procurement Agent</td>
+      <td>Calls <code>GENERATE_SCORECARD</code> UDF to compute a composite 0-10 score (OTD 40%, Quality 30%, Cost 30%). Ranks suppliers, flags underperformers (score &lt; 6.0 or OTD &lt; 80%), and drives rating changes via <code>UPDATE_SUPPLIER_RATING</code> SP + Slack alert.</td>
+      <td>Low-confidence warning if &lt; 5 shipments; max 1-tier rating change per update; cost-vs-quality always shown together.</td>
+    </tr>
+    <tr>
+      <td><strong>cost_analyzer</strong></td>
+      <td>Procurement Agent</td>
+      <td>Queries <code>DT_LANDED_COST</code> to break unit cost into material + freight + duty components. Builds a cost-quality matrix by cross-referencing each supplier's scorecard and OTD%. Runs trend analysis (current month vs prior 3 months) to identify which component drives increases, then computes annual savings opportunities across alternative suppliers.</td>
+      <td>Never recommends on cost alone; flags misleading savings where freight negates material discount; small-sample and stale-data warnings; currency consistency check.</td>
+    </tr>
+    <tr>
+      <td><strong>demand_planner</strong></td>
+      <td>Planning Agent</td>
+      <td>Runs inference on a pre-trained <strong>Snowflake ML FORECAST</strong> model (multi-series, no retraining per query). Returns 30-day projections with confidence intervals, trend direction (rising/falling/stable at &plusmn;10% threshold), and seasonality detection. Checks training-data outliers (single day &gt; 5&times; median) and model staleness (&gt; 7 days).</td>
+      <td>Falls back to 30-day rolling average if &lt; 60 days of history; always shows confidence range, not just point estimate; flags zero-demand parts as possibly discontinued.</td>
+    </tr>
+    <tr>
+      <td><strong>reorder_advisor</strong></td>
+      <td>Procurement + Planning Agents</td>
+      <td>Identifies parts below reorder point from <code>DT_INVENTORY_POSITION</code>, <strong>delegates</strong> demand forecasting to demand_planner, scores candidate suppliers via <code>GENERATE_SCORECARD</code>, then calculates reorder quantity: <code>(projected_30d_demand + safety_stock) &minus; on_hand</code>. Presents an <strong>editable recommendation</strong> &mdash; user can adjust quantity or supplier before confirming. Executes via <code>CREATE_PURCHASE_ORDER</code> SP + Slack notification.</td>
+      <td>3&times; quantity sanity check; $50K budget cap per PO; 7-day duplicate PO detection; passes through demand_planner confidence level; graceful fallback if no demand data.</td>
+    </tr>
+    <tr>
+      <td><strong>shipment_tracker</strong></td>
+      <td>Logistics Agent</td>
+      <td>Queries in-transit shipments and historical carrier performance to compute a <strong>revised ETA</strong> (expected + avg carrier delay). Classifies each shipment into 4 risk tiers: ON_TRACK &rarr; AT_RISK &rarr; DELAYED &rarr; CRITICAL (cross-referenced with order risk from <code>DT_ORDER_FULFILLMENT</code>). For CRITICAL shipments, drives the full <strong>expedite workflow</strong>: <code>TRIGGER_EXPEDITE</code> SP &rarr; Jira ticket &rarr; <code>UPDATE_ALERT_JIRA</code> &rarr; Slack alert.</td>
+      <td>ETA confidence rated by carrier history volume (HIGH/MEDIUM/LOW); 48h duplicate expedite block; max 3 escalations per shipment; hands off to reorder_advisor if root cause is low stock, not late shipment.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="highlight">
+  <strong>Design pattern:</strong> Skills are <em>composable</em> &mdash; reorder_advisor delegates to demand_planner, and shipment_tracker hands off to reorder_advisor. Each skill owns its guardrails independently, so safety rules apply regardless of which agent or workflow invokes them. Skills are shared across agents: reorder_advisor is used by both Procurement and Planning agents with identical logic.
+</div>
+
+<!-- ===================== 5. GOVERNANCE & TRUST ===================== -->
+<div class="section-divider" id="governance">
+  <div class="num">5</div>
+  <h2>Governance &amp; Trust</h2>
+</div>
+
+<h3>RBAC Hierarchy</h3>
+<pre class="mermaid">
+flowchart TD
+    AA[ACCOUNTADMIN] --> SCA[SUPPLY_CHAIN_ADMIN]
+    SCA --> SCAR[SC_AGENT_ROLE]
+    SCA --> PR[PROCUREMENT_ROLE]
+    SCA --> PLR[PLANNING_ROLE]
+    SCA --> LR[LOGISTICS_ROLE]
+
+    style AA fill:#881337,stroke:#fb7185,color:#e2e8f0
+    style SCA fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style SCAR fill:#1e3a5f,stroke:#29b5e8,color:#e2e8f0
+    style PR fill:#1e3a5f,stroke:#29b5e8,color:#e2e8f0
+    style PLR fill:#14532d,stroke:#22c55e,color:#e2e8f0
+    style LR fill:#451a03,stroke:#f59e0b,color:#e2e8f0
+</pre>
+
+<h3>Column Masking Matrix &mdash; 5 Policies</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Masking Policy</th><th>Protected Columns</th><th>Procurement</th><th>Planning</th><th>Logistics</th><th>Agent</th><th>Admin</th></tr></thead>
+  <tbody>
+    <tr><td>COST_DATA_MASK</td><td>freight_cost, unit_cost, unit_price, DT cost cols</td><td>&#9989;</td><td>&#10060;</td><td>&#10060;</td><td>&#9989;</td><td>&#9989;</td></tr>
+    <tr><td>SUPPLIER_DETAIL_MASK</td><td>quality_rating, carrier</td><td>&#9989;</td><td>&#10060;</td><td>&#9989;</td><td>&#9989;</td><td>&#9989;</td></tr>
+    <tr><td>CUSTOMER_DATA_MASK</td><td>customer name, segment, region</td><td>&#10060;</td><td>&#9989;</td><td>&#10060;</td><td>&#9989;</td><td>&#9989;</td></tr>
+    <tr><td>SAFETY_STOCK_MASK</td><td>safety_stock_qty</td><td>&#10060;</td><td>&#9989;</td><td>&#10060;</td><td>&#9989;</td><td>&#9989;</td></tr>
+    <tr><td>REORDER_POINT_MASK</td><td>reorder_point</td><td>&#9989;</td><td>&#9989;</td><td>&#10060;</td><td>&#9989;</td><td>&#9989;</td></tr>
+  </tbody>
+</table>
+</div>
+<p>&#9989; = sees real value &nbsp; &#10060; = sees NULL. Agent instructions explain NULL as "restricted for your role" &mdash; never as a data error.</p>
+
+<h3>Guardrails &mdash; Defense in Depth</h3>
+<div class="card-grid">
+  <div class="card"><div class="card-title">Input Validation</div><p>Every SP validates types, checks record existence, rejects invalid parameters before any DB mutation.</p></div>
+  <div class="card"><div class="card-title">Business Rules</div><p>48h duplicate expedite. Max 3 escalations. Max 1-tier rating change. $50K PO budget cap. 3x quantity sanity.</p></div>
+  <div class="card"><div class="card-title">User Confirmation</div><p>All write operations require explicit confirmation. Agent presents proposal with full details first.</p></div>
+  <div class="card"><div class="card-title">Structured Errors</div><p><code>SUCCESS:</code> / <code>ERROR:</code> / <code>GUARDRAIL_DUPLICATE:</code> / <code>GUARDRAIL_ESCALATION:</code> &mdash; agent parses prefix and responds.</p></div>
+  <div class="card"><div class="card-title">Data Staleness</div><p>If data is stale or insufficient, agent discloses the limitation. Never fabricates an answer.</p></div>
+  <div class="card"><div class="card-title">Graceful Degradation</div><p>60s timeout, 32K token cap. <code>tool_not_accessible: accept</code>. Slack failure doesn't block the critical path.</p></div>
+</div>
+
+<!-- ===================== 6. CONSISTENCY PROOF ===================== -->
+<div class="section-divider" id="consistency">
+  <div class="num">6</div>
+  <h2>Consistency Proof &mdash; Same Metric, Any Persona</h2>
+</div>
+
+<h3>Question: "What is the OTD% for Acme Components?"</h3>
+<div class="proof-grid">
+  <div class="proof-card">
+    <div class="persona">Procurement Manager</div>
+    <div class="question">"What is Acme's on-time delivery rate?"</div>
+    <div class="answer">50.0%</div>
+    <div class="source">SUM(on_time_count) * 100.0 / NULLIF(SUM(total_shipments), 0)</div>
+  </div>
+  <div class="proof-card">
+    <div class="persona">Logistics Coordinator</div>
+    <div class="question">"Show OTD for supplier Acme"</div>
+    <div class="answer">50.0%</div>
+    <div class="source">Same formula from DT_DELIVERY_PERF via semantic view</div>
+  </div>
+  <div class="proof-card">
+    <div class="persona">Admin (All Access)</div>
+    <div class="question">"What is the OTD for Acme?"</div>
+    <div class="answer">50.0%</div>
+    <div class="source">Identical SQL generated by Cortex Analyst</div>
+  </div>
+</div>
+
+<div class="highlight green">
+  <strong>The semantic view enforces the formula.</strong> Cortex Analyst generates the same SQL regardless of who asks. The metric definition lives in one place &mdash; the SUPPLY_CHAIN_ONTOLOGY &mdash; not in ad-hoc queries or spreadsheets. RBAC controls <em>what columns you see</em>, not <em>how the metric is calculated</em>.
+</div>
+
+<h3>14 Verified Queries &mdash; Pre-Validated Answers</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Category</th><th>Verified Questions</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Delivery</strong></td><td>OTD by supplier, OTD trend (3 months), top late suppliers</td></tr>
+    <tr><td><strong>Fulfillment</strong></td><td>Fill rate by plant, fill rate trend, at-risk orders, CRITICAL orders</td></tr>
+    <tr><td><strong>Inventory</strong></td><td>Low DOI parts, reorder candidates, stockout risk items</td></tr>
+    <tr><td><strong>Cost</strong></td><td>Landed cost by supplier, cost breakdown, cheapest supplier for reorders, low-OTD + high-cost suppliers</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ===================== 7. COCO LIFECYCLE ===================== -->
+<div class="section-divider" id="coco-lifecycle">
+  <div class="num">7</div>
+  <h2>CoCo Usage Across the Full Lifecycle</h2>
+</div>
+
+<div class="lifecycle">
+  <div class="phase">
+    <div class="phase-title">Planning</div>
+    <ul>
+      <li>Explored existing supply chain patterns with CoCo</li>
+      <li>Designed the ontology (entity chain, metrics, relationships)</li>
+      <li>Drafted solution architecture and HLD diagram</li>
+      <li>Planned the 10-phase deployment order</li>
+      <li>Generated design decision document (2100+ lines)</li>
+    </ul>
+  </div>
+  <div class="phase">
+    <div class="phase-title">Development</div>
+    <ul>
+      <li>Generated all 44 SQL/Python/Markdown files</li>
+      <li>Built 565+ rows of synthetic data (referentially consistent)</li>
+      <li>Authored 868-line semantic view YAML</li>
+      <li>Created 4 agent specs with skills + tools</li>
+      <li>Built Streamlit app (397 lines, persona-aware)</li>
+      <li>Integrated Jira, Gmail, and Slack MCP</li>
+    </ul>
+  </div>
+  <div class="phase">
+    <div class="phase-title">Execution</div>
+    <ul>
+      <li>Deployed 52+ objects via CoCo CLI</li>
+      <li>Ran agent queries across all 3 personas</li>
+      <li>Triggered expedite workflows end-to-end</li>
+      <li>Created POs with Jira + Slack notifications</li>
+      <li>Set up 3 daily brief automations</li>
+    </ul>
+  </div>
+  <div class="phase">
+    <div class="phase-title">Testing</div>
+    <ul>
+      <li>Validated metric consistency across personas</li>
+      <li>Tested guardrail enforcement (duplicate, budget, tier)</li>
+      <li>Verified masking policies per role</li>
+      <li>Confirmed Jira ticket creation + Slack alerts</li>
+      <li>Tested Streamlit NL query interface</li>
+      <li>Fixed agent response parsing bug in Streamlit</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== 8. LIVE SURFACES ===================== -->
+<div class="section-divider" id="surfaces">
+  <div class="num">8</div>
+  <h2>Live Surfaces</h2>
+</div>
+
+<h3>Streamlit Dashboard &mdash; Persona-Aware, 9 Pages</h3>
+<div class="card">
+  <div class="card-title">Supply Chain Analyst (Streamlit-in-Snowflake)</div>
+  <p>Auto-detects user role via <code>CURRENT_ROLE()</code>. Persona-aware navigation:</p>
+  <ul>
+    <li><strong>Procurement:</strong> Overview, Suppliers, Costs, Alerts</li>
+    <li><strong>Planning:</strong> Overview, Orders, Inventory, Demand, Alerts</li>
+    <li><strong>Logistics:</strong> Overview, Shipments, Orders, Risk, Alerts</li>
+    <li><strong>Admin:</strong> All 9 pages (Overview, Suppliers, Costs, Orders, Inventory, Demand, Shipments, Risk, Alerts)</li>
+  </ul>
+  <p>Every page has a <strong>natural language query interface</strong> at the bottom &mdash; calls <code>DATA_AGENT_RUN</code> against the primary agent. Plotly visualizations with 5-minute cache.</p>
+</div>
+
+<h3>CoCo Automations &mdash; Daily Briefs</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Automation</th><th>Team</th><th>Schedule</th><th>Delivery</th><th>Content</th></tr></thead>
+  <tbody>
+    <tr><td>LOGISTICS_DAILY_BRIEF</td><td>Logistics</td><td>Weekdays 7:30 AM IST</td><td>Gmail + Slack (#supply-chain-logistics)</td><td>Shipment status, carrier OTD, expedite tracker, order impact</td></tr>
+    <tr><td>PLANNING_DAILY_BRIEF</td><td>Planning</td><td>Weekdays 8:00 AM IST</td><td>Gmail + Slack (#supply-chain-planning)</td><td>Inventory health, fulfillment, demand gap, model staleness</td></tr>
+    <tr><td>PROCUREMENT_DAILY_BRIEF</td><td>Procurement</td><td>Weekdays 8:30 AM IST</td><td>Gmail + Slack (#supply-chain-procurement)</td><td>Supplier scorecards, cost trends, reorder candidates, alerts</td></tr>
+  </tbody>
+</table>
+</div>
+<p>Each brief runs unattended, generates SQL, compiles the report, emails it, and posts a condensed summary to the team's Slack channel. Machine-parseable status line for monitoring.</p>
+
+<h3>MCP Connectors &mdash; 3 External Integrations</h3>
+<div class="card-grid">
+  <div class="card">
+    <div class="card-title">Atlassian Jira (ATLASSIAN_MCP)</div>
+    <ul>
+      <li>Creates real tickets in SCRUM project</li>
+      <li>Ticket key stored back in Snowflake</li>
+      <li>Triggered by expedites and PO creation</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="card-title">Gmail (GMAIL)</div>
+    <ul>
+      <li>Sends formatted daily briefs to team inbox</li>
+      <li>Ad-hoc email notifications on request</li>
+      <li>Attached to all 3 automations</li>
+    </ul>
+  </div>
+  <div class="card">
+    <div class="card-title">Slack (SLACK_MCP)</div>
+    <ul>
+      <li>Alerts to #supply-chain-alerts (expedites, POs, rating changes)</li>
+      <li>Daily brief summaries to team-specific channels</li>
+      <li>Graceful fallback if unavailable</li>
+    </ul>
+  </div>
+</div>
+
+<h3>Cross-Surface Deployment</h3>
+<div class="tags">
+  <span class="tag">Snowsight Cloud Agents</span>
+  <span class="tag green">Streamlit-in-Snowflake</span>
+  <span class="tag">CoCo CLI</span>
+  <span class="tag">CoCo Desktop</span>
+  <span class="tag amber">Slackbot-ready</span>
+</div>
+
+<!-- ===================== 9. IMPACT & INGENUITY ===================== -->
+<div class="section-divider" id="impact">
+  <div class="num">9</div>
+  <h2>Impact &amp; Ingenuity</h2>
+</div>
+
+<h3>Measurable Outcomes</h3>
+<div class="metrics">
+  <div class="metric"><div class="val">100%</div><div class="label">Metric Consistency<br>(3 teams, same numbers)</div></div>
+  <div class="metric"><div class="val">&lt;1 min</div><div class="label">Time to Insight<br>(vs 30-60 min manual)</div></div>
+  <div class="metric"><div class="val">1 turn</div><div class="label">Action Latency<br>(expedite + Jira + Slack)</div></div>
+  <div class="metric"><div class="val">Zero</div><div class="label">Manual Reports<br>(3 auto daily briefs)</div></div>
+  <div class="metric"><div class="val">5</div><div class="label">Reusable Skills<br>(stage-hosted, shareable)</div></div>
+</div>
+
+<h3>Full Object Inventory</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Category</th><th>Count</th><th>Objects</th></tr></thead>
+  <tbody>
+    <tr><td>Base Tables</td><td>10</td><td>SUPPLIERS, PARTS, PLANTS, CUSTOMERS, INVENTORY, SHIPMENTS, SHIPMENT_LINES, ORDERS, ORDER_LINES, SUPPLY_CHAIN_ALERTS</td></tr>
+    <tr><td>Dynamic Tables</td><td>4</td><td>DT_DELIVERY_PERF, DT_INVENTORY_POSITION, DT_LANDED_COST, DT_ORDER_FULFILLMENT</td></tr>
+    <tr><td>Views</td><td>1</td><td>V_ORDER_FULFILLMENT (live risk scoring)</td></tr>
+    <tr><td>Semantic View</td><td>1</td><td>SUPPLY_CHAIN_ONTOLOGY (11 entities, 14 VQRs)</td></tr>
+    <tr><td>Cortex Agents</td><td>4</td><td>SUPPLY_CHAIN_AGENT, PROCUREMENT_AGENT, PLANNING_AGENT, LOGISTICS_AGENT</td></tr>
+    <tr><td>Skills</td><td>5</td><td>supplier_scorecard, cost_analyzer, reorder_advisor, demand_planner, shipment_tracker</td></tr>
+    <tr><td>Stored Procedures</td><td>4</td><td>CREATE_PURCHASE_ORDER, TRIGGER_EXPEDITE, UPDATE_SUPPLIER_RATING, UPDATE_ALERT_JIRA</td></tr>
+    <tr><td>UDFs</td><td>1</td><td>GENERATE_SCORECARD</td></tr>
+    <tr><td>MCP Servers</td><td>3</td><td>ATLASSIAN_MCP, GMAIL, SLACK_MCP</td></tr>
+    <tr><td>CoCo Automations</td><td>3</td><td>LOGISTICS_DAILY_BRIEF, PLANNING_DAILY_BRIEF, PROCUREMENT_DAILY_BRIEF</td></tr>
+    <tr><td>Streams</td><td>3</td><td>STREAM_SHIPMENTS, STREAM_INVENTORY, STREAM_ORDER_RISK</td></tr>
+    <tr><td>Tasks</td><td>3</td><td>TASK_SHIPMENT_DELAY_ALERT, TASK_INVENTORY_LOW_ALERT, TASK_ORDER_RISK_ALERT</td></tr>
+    <tr><td>Masking Policies</td><td>5</td><td>COST_DATA_MASK, SUPPLIER_DETAIL_MASK, CUSTOMER_DATA_MASK, SAFETY_STOCK_MASK, REORDER_POINT_MASK</td></tr>
+    <tr><td>Roles</td><td>5</td><td>SUPPLY_CHAIN_ADMIN, SC_AGENT_ROLE, PROCUREMENT_ROLE, PLANNING_ROLE, LOGISTICS_ROLE</td></tr>
+    <tr><td>ML Model</td><td>1</td><td>DEMAND_FORECAST_MODEL (multi-series FORECAST)</td></tr>
+    <tr><td>Streamlit App</td><td>1</td><td>Supply Chain Analyst (9-page persona-aware dashboard)</td></tr>
+    <tr><td>Stages</td><td>1</td><td>SKILL_STAGE</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>CoCo Ingenuity Checklist</h3>
+<ul class="checklist">
+  <li><strong>Reusable &amp; shareable skills</strong> &mdash; 5 documented skills with YAML frontmatter, stage-hosted, ready for cross-team reuse</li>
+  <li><strong>MCP connectors to external tools</strong> &mdash; Atlassian Jira + Gmail + Slack; read-only analysis turned into cross-tool action</li>
+  <li><strong>Automations &amp; scheduled runs</strong> &mdash; 3 daily briefs with Gmail + Slack delivery, weekday cadence, unattended operation</li>
+  <li><strong>Custom tools &amp; function calling</strong> &mdash; 5 registered tools (4 SPs + 1 UDF) with input schemas, guardrails, and structured returns</li>
+  <li><strong>Multi-agent orchestration</strong> &mdash; 4 agents with agent_toolset routing, clear handoffs, shared semantic context</li>
+  <li><strong>Working across surfaces</strong> &mdash; Snowsight Cloud Agents, Streamlit dashboard (with NL query), CoCo CLI, CoCo Desktop</li>
+  <li><strong>Guardrails &amp; graceful fallback</strong> &mdash; Validation chains, confirmation gates, structured errors, data staleness disclosure, Slack degradation</li>
+</ul>
+
+<h3>Scalability</h3>
+<ul>
+  <li><strong>Add personas:</strong> New sub-agent + skill, register as <code>agent_toolset</code> on the router</li>
+  <li><strong>Add data sources:</strong> New tables feed into DTs automatically (INCREMENTAL refresh)</li>
+  <li><strong>Add metrics:</strong> Extend the semantic view YAML &mdash; all agents pick up changes immediately</li>
+  <li><strong>Add integrations:</strong> Attach new MCP servers (ServiceNow, SAP, PagerDuty) to agent specs</li>
+  <li><strong>Scale data:</strong> INCREMENTAL DTs and warehouse compute scale to millions of rows</li>
+  <li><strong>Production path:</strong> Replace synthetic data with real ERP/WMS feeds via Snowpipe Streaming</li>
+</ul>
+
+<!-- ===================== FOOTER ===================== -->
+<div class="footer">
+  <p><strong>Supply Chain Ontology &amp; Governed Conversational Analytics</strong></p>
+  <p>Built entirely with Snowflake CoCo CLI &mdash; Prabhjot Kaur &mdash; GCC Edition Hackathon 2026</p>
+  <p style="margin-top:8px;">52+ Snowflake objects &bull; 4 Cortex Agents &bull; 5 Reusable Skills &bull; 3 MCP Servers &bull; 3 Automations &bull; 1 Semantic Ontology</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.6/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'strict', theme: 'dark' });
+</script>
+
+</body>
+</html>

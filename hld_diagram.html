@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>HLD - Supply Chain Ontology System</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-10-04",
+    "intent": "High-Level Design diagram for Supply Chain Ontology project",
+    "sections": [
+      { "id": "hld-main", "title": "HLD Architecture", "dataSources": [], "producerNotes": "Mermaid diagrams showing full system relationships." }
+    ]
+  }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+      max-width: 1200px; width: 100%; margin: 0 auto;
+      padding: clamp(16px, 3vw, 32px);
+      color: light-dark(#1e293b, #e2e8f0);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.5;
+    }
+    h1 { font-size: clamp(22px, 3.5vw, 32px); color: #29b5e8; text-align: center; margin-bottom: 4px; }
+    .subtitle { text-align: center; color: light-dark(#64748b, #94a3b8); font-size: 14px; margin-bottom: 32px; }
+    h2 {
+      font-size: clamp(17px, 2.5vw, 22px); color: light-dark(#0f172a, #f1f5f9);
+      border-bottom: 2px solid #29b5e8; padding-bottom: 6px; margin: 36px 0 16px;
+    }
+    h3 { font-size: 15px; color: #29b5e8; margin: 20px 0 8px; }
+    p, li { font-size: 13px; margin-bottom: 4px; }
+    ul { padding-left: 18px; margin: 6px 0 12px; }
+    .diagram-wrap { overflow-x: auto; margin: 16px 0; }
+    .legend {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 8px; margin: 16px 0; font-size: 12px;
+    }
+    .legend-item {
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+      background: light-dark(#f8fafc, #1e293b);
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 6px;
+    }
+    .legend-color {
+      width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0;
+    }
+    img, svg { max-width: 100%; height: auto; }
+    .note {
+      background: light-dark(#eff6ff, #1e3a5f);
+      border-left: 3px solid #29b5e8;
+      padding: 10px 14px; border-radius: 0 6px 6px 0;
+      margin: 12px 0; font-size: 13px;
+    }
+    .table-wrap { overflow-x: auto; margin: 12px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 6px 10px; text-align: left; }
+    th { background: light-dark(#f1f5f9, #1e293b); font-weight: 600; }
+    code { background: light-dark(#f1f5f9, #1e293b); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<h1>High-Level Design (HLD)</h1>
+<p class="subtitle">Supply Chain Ontology &amp; Governed Conversational Analytics &mdash; Complete System Map</p>
+
+<!-- ========== DIAGRAM 1: FULL SYSTEM HLD ========== -->
+<h2 id="hld-main">1. Full System Architecture</h2>
+<p>End-to-end flow: Data Sources &rarr; Pipelines &rarr; Semantic Layer &rarr; Agents &rarr; Tools &rarr; Skills &rarr; MCP &rarr; Surfaces</p>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+flowchart TB
+    subgraph DATA["DATA LAYER (10 Base Tables)"]
+        direction LR
+        SUPP[SUPPLIERS<br/>25 rows]
+        PARTS[PARTS<br/>30 rows]
+        PLANTS[PLANTS<br/>10 rows]
+        CUST[CUSTOMERS<br/>20 rows]
+        INV[INVENTORY<br/>50 rows]
+        SHIP[SHIPMENTS<br/>80 rows]
+        SL[SHIPMENT_LINES<br/>120 rows]
+        ORD[ORDERS<br/>80 rows]
+        OL[ORDER_LINES<br/>150 rows]
+        ALERTS[SUPPLY_CHAIN<br/>_ALERTS]
+    end
+
+    subgraph PIPE["PIPELINE LAYER (INCREMENTAL Dynamic Tables)"]
+        DT1["DT_DELIVERY_PERF<br/>OTD%, avg lead time,<br/>late count"]
+        DT2["DT_INVENTORY_POSITION<br/>DOI, stockout risk,<br/>reorder candidates"]
+        DT3["DT_LANDED_COST<br/>material + freight<br/>+ duty per unit"]
+        DT4["DT_ORDER_FULFILLMENT<br/>fill rate, stock<br/>coverage days"]
+    end
+
+    subgraph VIEWL["VIEW LAYER"]
+        VIEW["V_ORDER_FULFILLMENT<br/>risk_score 0-12<br/>uses CURRENT_DATE()"]
+    end
+
+    subgraph STREAM["EVENT LAYER"]
+        STR["STREAM_ORDER_RISK<br/>(on DT_ORDER_FULFILLMENT)"]
+        TASK["TASK_ORDER_RISK_ALERT<br/>(triggered by stream)"]
+    end
+
+    subgraph SEM["SEMANTIC LAYER"]
+        SV["SUPPLY_CHAIN_ONTOLOGY<br/>(Semantic View)<br/>4 canonical metrics"]
+    end
+
+    subgraph PRIMARY_AGENT["SUPPLY_CHAIN_AGENT (Primary Router)"]
+        direction TB
+        PA_INST["Instructions:<br/>Route by domain,<br/>cross-persona consistency"]
+        PA_CA["Tool: SupplyChainAnalyst<br/>(cortex_analyst_text_to_sql)"]
+        PA_CHART["Tool: data_to_chart"]
+    end
+
+    subgraph PROC_AGENT["PROCUREMENT_AGENT"]
+        direction TB
+        PR_INST["Instructions:<br/>Supplier eval, cost,<br/>PO creation"]
+    end
+
+    subgraph PLAN_AGENT["PLANNING_AGENT"]
+        direction TB
+        PL_INST["Instructions:<br/>Demand forecast,<br/>inventory planning"]
+    end
+
+    subgraph LOG_AGENT["LOGISTICS_AGENT"]
+        direction TB
+        LO_INST["Instructions:<br/>Shipment tracking,<br/>expedite workflow"]
+    end
+
+    subgraph SKILLS["SKILLS (Stage-hosted SKILL.md)"]
+        SK1["supplier_scorecard"]
+        SK2["cost_analyzer"]
+        SK3["reorder_advisor"]
+        SK4["demand_planner"]
+        SK5["shipment_tracker"]
+    end
+
+    subgraph TOOLS["CUSTOM TOOLS (SPs/UDFs)"]
+        T1["GENERATE_SCORECARD<br/>(UDF, read-only)"]
+        T2["CREATE_PURCHASE_ORDER<br/>(SP, write)"]
+        T3["UPDATE_SUPPLIER_RATING<br/>(SP, write)"]
+        T4["TRIGGER_EXPEDITE<br/>(SP, write)"]
+        T5["UPDATE_ALERT_JIRA<br/>(SP, write)"]
+    end
+
+    subgraph MCP_LAYER["MCP CONNECTORS"]
+        JIRA["ATLASSIAN_MCP<br/>Jira Project: SCRUM<br/>os93152.atlassian.net"]
+        GMAIL_MCP["GMAIL MCP<br/>os93152@gmail.com"]
+    end
+
+    subgraph AUTO["CoCo AUTOMATIONS"]
+        A1["LOGISTICS_DAILY_BRIEF<br/>Weekdays 7:30 AM IST"]
+        A2["PLANNING_DAILY_BRIEF<br/>Weekdays 8:00 AM IST"]
+        A3["PROCUREMENT_DAILY_BRIEF<br/>Weekdays 8:30 AM IST"]
+    end
+
+    subgraph SURFACES["USER SURFACES"]
+        SNOW["Snowsight<br/>Cloud Agents"]
+        STLIT["Streamlit<br/>Dashboard"]
+        CLI["CoCo CLI<br/>& Desktop"]
+    end
+
+    %% Data to Pipeline
+    SUPP & PARTS & PLANTS & CUST --> DT1 & DT2 & DT3 & DT4
+    INV --> DT2
+    SHIP & SL --> DT1 & DT3
+    ORD & OL --> DT2 & DT4
+
+    %% Pipeline to View
+    DT4 --> VIEW
+
+    %% Stream / Task
+    DT4 --> STR --> TASK --> ALERTS
+
+    %% Pipeline to Semantic
+    DT1 & DT2 & DT3 --> SV
+    VIEW --> SV
+
+    %% Semantic to Primary Agent
+    SV --> PA_CA
+
+    %% Primary routes to sub-agents
+    PRIMARY_AGENT -->|agent_toolset<br/>PROCUREMENT_TOOLS| PROC_AGENT
+    PRIMARY_AGENT -->|agent_toolset<br/>PLANNING_TOOLS| PLAN_AGENT
+    PRIMARY_AGENT -->|agent_toolset<br/>LOGISTICS_TOOLS| LOG_AGENT
+
+    %% Skills to Agents
+    SK1 & SK2 & SK3 --> PROC_AGENT
+    SK3 & SK4 --> PLAN_AGENT
+    SK5 --> LOG_AGENT
+
+    %% Tools to Agents
+    T1 & T2 & T3 --> PROC_AGENT
+    T4 & T5 --> LOG_AGENT
+    T1 & T2 & T3 & T4 & T5 --> PRIMARY_AGENT
+
+    %% Tools write to DB
+    T2 -.->|INSERT| ORD
+    T3 -.->|UPDATE| SUPP
+    T4 -.->|UPDATE + INSERT| SHIP & ALERTS
+    T5 -.->|UPDATE| ALERTS & SHIP
+
+    %% MCP connections
+    LOG_AGENT -->|create issue| JIRA
+    PROC_AGENT -->|create issue| JIRA
+    PRIMARY_AGENT -->|create issue| JIRA
+    PRIMARY_AGENT -->|send email| GMAIL_MCP
+    LOG_AGENT -->|send email| GMAIL_MCP
+
+    %% Automations
+    A1 & A2 & A3 -->|send daily brief| GMAIL_MCP
+
+    %% Surfaces
+    PRIMARY_AGENT --> SNOW & CLI
+    STLIT --> VIEW & DT1 & DT2 & DT3
+
+    %% Styles
+    style DATA fill:#1e3a5f,stroke:#29b5e8,color:#e2e8f0
+    style PIPE fill:#14532d,stroke:#22c55e,color:#e2e8f0
+    style VIEWL fill:#451a03,stroke:#f59e0b,color:#e2e8f0
+    style STREAM fill:#3b0764,stroke:#a855f7,color:#e2e8f0
+    style SEM fill:#312e81,stroke:#818cf8,color:#e2e8f0
+    style PRIMARY_AGENT fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style PROC_AGENT fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style PLAN_AGENT fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style LOG_AGENT fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style SKILLS fill:#065f46,stroke:#34d399,color:#e2e8f0
+    style TOOLS fill:#7c2d12,stroke:#fb923c,color:#e2e8f0
+    style MCP_LAYER fill:#881337,stroke:#fb7185,color:#e2e8f0
+    style AUTO fill:#1e3a5f,stroke:#38bdf8,color:#e2e8f0
+    style SURFACES fill:#1e293b,stroke:#64748b,color:#e2e8f0
+</pre>
+</div>
+
+<h3>Legend</h3>
+<div class="legend">
+  <div class="legend-item"><div class="legend-color" style="background:#1e3a5f;border:1px solid #29b5e8;"></div> Data Layer (10 base tables)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#14532d;border:1px solid #22c55e;"></div> Pipeline Layer (4 INCREMENTAL DTs)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#451a03;border:1px solid #f59e0b;"></div> View Layer (risk scoring)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#3b0764;border:1px solid #a855f7;"></div> Event Layer (stream + task)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#312e81;border:1px solid #818cf8;"></div> Semantic Layer (ontology)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#4c1d95;border:1px solid #a78bfa;"></div> Agent Layer (4 Cortex Agents)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#065f46;border:1px solid #34d399;"></div> Skills (5 stage-hosted SKILL.md)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#7c2d12;border:1px solid #fb923c;"></div> Custom Tools (4 SPs + 1 UDF)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#881337;border:1px solid #fb7185;"></div> MCP Connectors (Jira + Gmail)</div>
+  <div class="legend-item"><div class="legend-color" style="background:#1e293b;border:1px solid #64748b;"></div> User Surfaces</div>
+</div>
+
+
+<!-- ========== DIAGRAM 2: AGENT-TOOL-SKILL-MCP MAP ========== -->
+<h2>2. Agent &rarr; Tool &rarr; Skill &rarr; MCP Mapping</h2>
+<p>Which agent calls which tool, uses which skill, and connects to which MCP connector.</p>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+flowchart LR
+    subgraph SCA["SUPPLY_CHAIN_AGENT<br/>(Primary Router)"]
+        SCA_N[" "]
+    end
+
+    subgraph PA["PROCUREMENT_AGENT"]
+        PA_N[" "]
+    end
+
+    subgraph PLA["PLANNING_AGENT"]
+        PLA_N[" "]
+    end
+
+    subgraph LA["LOGISTICS_AGENT"]
+        LA_N[" "]
+    end
+
+    subgraph ANALYST["Cortex Analyst"]
+        CA["SupplyChainAnalyst<br/>(text-to-sql)"]
+    end
+
+    subgraph TOOLS_G["Custom Tools"]
+        T1["GENERATE_SCORECARD<br/>(UDF read-only)"]
+        T2["CREATE_PURCHASE_ORDER<br/>(SP write)"]
+        T3["UPDATE_SUPPLIER_RATING<br/>(SP write)"]
+        T4["TRIGGER_EXPEDITE<br/>(SP write)"]
+        T5["UPDATE_ALERT_JIRA<br/>(SP write)"]
+        TC["data_to_chart"]
+    end
+
+    subgraph SKILLS_G["Skills"]
+        S1["supplier_scorecard"]
+        S2["cost_analyzer"]
+        S3["reorder_advisor"]
+        S4["demand_planner"]
+        S5["shipment_tracker"]
+    end
+
+    subgraph MCP_G["MCP Connectors"]
+        JIRA["ATLASSIAN_MCP<br/>(Jira SCRUM)"]
+        GM["GMAIL MCP"]
+    end
+
+    %% Primary Agent connections
+    SCA_N -->|agent_toolset| PA_N
+    SCA_N -->|agent_toolset| PLA_N
+    SCA_N -->|agent_toolset| LA_N
+    SCA_N --> CA
+    SCA_N --> TC
+    SCA_N --> T1 & T2 & T3 & T4 & T5
+    SCA_N --> JIRA
+    SCA_N --> GM
+
+    %% Procurement Agent
+    PA_N --> CA
+    PA_N --> T1
+    PA_N --> T2
+    PA_N --> T3
+    PA_N --> S1
+    PA_N --> S2
+    PA_N --> S3
+    PA_N --> JIRA
+
+    %% Planning Agent
+    PLA_N --> CA
+    PLA_N --> S3
+    PLA_N --> S4
+
+    %% Logistics Agent
+    LA_N --> CA
+    LA_N --> T4
+    LA_N --> T5
+    LA_N --> S5
+    LA_N --> JIRA
+    LA_N --> GM
+
+    style SCA fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style PA fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style PLA fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style LA fill:#4c1d95,stroke:#a78bfa,color:#e2e8f0
+    style ANALYST fill:#312e81,stroke:#818cf8,color:#e2e8f0
+    style TOOLS_G fill:#7c2d12,stroke:#fb923c,color:#e2e8f0
+    style SKILLS_G fill:#065f46,stroke:#34d399,color:#e2e8f0
+    style MCP_G fill:#881337,stroke:#fb7185,color:#e2e8f0
+</pre>
+</div>
+
+
+<!-- ========== DIAGRAM 3: EXPEDITE WORKFLOW ========== -->
+<h2>3. Expedite Workflow (Agent &rarr; Tool &rarr; MCP End-to-End)</h2>
+<p>The most complex multi-step workflow: user request triggers guardrails, DB writes, Jira ticket creation, and ticket linking.</p>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant SCA as SUPPLY_CHAIN_AGENT<br/>(Router)
+    participant LA as LOGISTICS_AGENT
+    participant TE as TRIGGER_EXPEDITE<br/>(SP - Guardrails + DB)
+    participant JIRA as ATLASSIAN_MCP<br/>(Jira SCRUM)
+    participant UAJ as UPDATE_ALERT_JIRA<br/>(SP - Link Ticket)
+    participant DB as Snowflake DB<br/>(SHIPMENTS + ALERTS)
+
+    User->>SCA: "Expedite shipment SH011"
+    SCA->>LA: Route via agent_toolset LOGISTICS_TOOLS
+
+    Note over LA: Step 1: Present details and confirm
+    LA-->>User: "SH011 is delayed 5 days. Expedite as CRITICAL?"
+    User-->>LA: "Yes, proceed"
+
+    Note over LA: Step 2: Call SP with guardrails
+    LA->>TE: TRIGGER_EXPEDITE('SHIPMENT','SH011','Delayed 5 days','CRITICAL')
+    TE->>TE: Guardrail 1: Validate type = SHIPMENT
+    TE->>DB: Check SH011 exists
+    DB-->>TE: Found
+    TE->>DB: Check 48h duplicate
+    DB-->>TE: No duplicate
+    TE->>DB: Check escalation cap (max 3)
+    DB-->>TE: Count = 0
+    TE->>DB: UPDATE SHIPMENTS SET priority='EXPEDITED'
+    TE->>DB: INSERT INTO ALERTS (jira_ticket_id = NULL)
+    TE-->>LA: "SUCCESS: Expedited SHIPMENT SH011. Alert ID: 34. NEXT: Create Jira ticket"
+
+    Note over LA: Step 3: Create Jira ticket via MCP
+    LA->>JIRA: create_issue(project=SCRUM, type=Task, summary="[EXPEDITE] SHIPMENT SH011")
+    JIRA-->>LA: {key: "SCRUM-42", id: "10042"}
+
+    Note over LA: Step 4: Link ticket back to Snowflake
+    LA->>UAJ: UPDATE_ALERT_JIRA('SH011', 'SCRUM-42')
+    UAJ->>DB: UPDATE ALERTS SET jira_ticket_id='SCRUM-42'
+    UAJ->>DB: UPDATE SHIPMENTS SET jira_ticket_id='SCRUM-42'
+    UAJ-->>LA: "SUCCESS: Linked Jira ticket SCRUM-42 to SH011"
+
+    Note over LA: Step 5: Confirm to user
+    LA-->>User: "Expedited SH011 as CRITICAL. Jira ticket SCRUM-42 created and linked."
+</pre>
+</div>
+
+
+<!-- ========== DIAGRAM 4: AUTOMATION WORKFLOW ========== -->
+<h2>4. CoCo Automation Workflow (Scheduled &rarr; Query &rarr; Gmail)</h2>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+sequenceDiagram
+    participant CRON as CoCo Scheduler<br/>(CRON weekdays)
+    participant AUTO as LOGISTICS_DAILY_BRIEF<br/>(Agent Task)
+    participant SF as Snowflake SQL<br/>(SUPPLY_CHAIN_DB.SCM)
+    participant GM as GMAIL MCP<br/>(os93152@gmail.com)
+
+    Note over CRON: 7:30 AM IST, Mon-Fri
+    CRON->>AUTO: Fire automation (unattended)
+
+    Note over AUTO: Section 1: Shipment Status
+    AUTO->>SF: SELECT shipments with status classification
+    SF-->>AUTO: ON_TRACK: 12, AT_RISK: 5, DELAYED: 3
+
+    Note over AUTO: Section 2: Carrier Performance
+    AUTO->>SF: SELECT carrier OTD%, avg delay
+    SF-->>AUTO: FastFreight 92%, EuroExpress 85%, ...
+
+    Note over AUTO: Section 3: Expedite Tracker
+    AUTO->>SF: SELECT open expedites from ALERTS
+    SF-->>AUTO: 2 open, 1 overdue
+
+    Note over AUTO: Section 4: Order Impact
+    AUTO->>SF: SELECT from V_ORDER_FULFILLMENT risk
+    SF-->>AUTO: 3 CRITICAL, 2 HIGH risk orders
+
+    Note over AUTO: Section 5: Email Delivery
+    AUTO->>GM: send_email(to: os93152@gmail.com, subject: "[Logistics] Daily Brief - 2026-10-04", body: full report)
+    GM-->>AUTO: Sent OK
+
+    AUTO->>AUTO: Status: LOGISTICS_DAILY_BRIEF_OK delayed=3 at_risk=5 email_sent=OK
+</pre>
+</div>
+
+<div class="note">
+  <strong>All 3 automations follow this pattern:</strong> LOGISTICS (7:30 AM), PLANNING (8:00 AM), PROCUREMENT (8:30 AM). Each queries different DTs/views, compiles a team-specific brief, and emails via Gmail MCP. Created with <code>cortex automation create --mcp SUPPLY_CHAIN_DB.SCM.GMAIL --no-workspace</code>.
+</div>
+
+
+<!-- ========== DIAGRAM 5: PO CREATION WORKFLOW ========== -->
+<h2>5. Purchase Order Workflow (Procurement Agent)</h2>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+sequenceDiagram
+    actor User
+    participant SCA as SUPPLY_CHAIN_AGENT
+    participant PA as PROCUREMENT_AGENT
+    participant GS as GENERATE_SCORECARD<br/>(UDF read-only)
+    participant CPO as CREATE_PURCHASE_ORDER<br/>(SP write)
+    participant JIRA as ATLASSIAN_MCP
+    participant DB as Snowflake DB
+
+    User->>SCA: "I need to reorder P100 for Chicago plant"
+    SCA->>PA: Route via PROCUREMENT_TOOLS
+
+    Note over PA: Uses reorder_advisor skill
+    PA->>DB: Query DT_INVENTORY_POSITION for P100 at PL01
+    DB-->>PA: on_hand=80, reorder_point=300, DOI=6 days
+
+    PA->>GS: GENERATE_SCORECARD('S01')
+    GS-->>PA: {composite: 8.2, otd: 9.1, quality: 8.5, cost: 7.0}
+    PA->>GS: GENERATE_SCORECARD('S03')
+    GS-->>PA: {composite: 8.8, otd: 9.5, quality: 9.0, cost: 7.8}
+
+    Note over PA: Uses cost_analyzer skill
+    PA->>DB: Query DT_LANDED_COST for P100 by supplier
+    DB-->>PA: S01: $12.50/unit, S03: $12.80/unit
+
+    PA-->>User: "Recommend: 500 units P100 from S03 (score 8.8, $12.80/unit) to PL01. Confirm?"
+    User-->>PA: "Yes"
+
+    PA->>CPO: CREATE_PURCHASE_ORDER('P100','S03','PL01',500,'Low stock reorder')
+    CPO->>DB: Validate P100, S03 exist
+    CPO->>DB: INSERT INTO PURCHASE_ORDERS
+    CPO-->>PA: "SUCCESS: PO-0015 created"
+
+    PA->>JIRA: create_issue(project=SCRUM, summary="[PO] P100 from S03 - Qty 500")
+    JIRA-->>PA: {key: "SCRUM-43"}
+
+    PA-->>User: "PO-0015 created. Jira SCRUM-43 for tracking."
+</pre>
+</div>
+
+
+<!-- ========== DIAGRAM 6: STREAM + TASK PIPELINE ========== -->
+<h2>6. Stream-Triggered Risk Alert Pipeline</h2>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+flowchart LR
+    subgraph BASE["Base Tables"]
+        ORD[ORDERS]
+        OL[ORDER_LINES]
+        INV[INVENTORY]
+    end
+
+    subgraph DT["Dynamic Table"]
+        DTF["DT_ORDER_FULFILLMENT<br/>(INCREMENTAL refresh)<br/>fill rate, stock coverage"]
+    end
+
+    subgraph STR["Stream"]
+        STREAM["STREAM_ORDER_RISK<br/>(captures inserts/updates<br/>on DT)"]
+    end
+
+    subgraph TSK["Task (Triggered)"]
+        TASK["TASK_ORDER_RISK_ALERT<br/>WHEN: SYSTEM$STREAM_HAS_DATA<br/>Reads V_ORDER_FULFILLMENT<br/>for live risk_score"]
+    end
+
+    subgraph VIEW["View"]
+        V["V_ORDER_FULFILLMENT<br/>Computes risk_score 0-12<br/>using CURRENT_DATE()"]
+    end
+
+    subgraph OUT["Output"]
+        ALERTS["SUPPLY_CHAIN_ALERTS<br/>alert_type = ORDER_RISK<br/>priority = HIGH/CRITICAL"]
+    end
+
+    BASE --> DTF
+    DTF --> STREAM
+    DTF --> V
+    STREAM -->|triggers| TASK
+    TASK -->|reads| V
+    TASK -->|inserts| ALERTS
+
+    style BASE fill:#1e3a5f,stroke:#29b5e8,color:#e2e8f0
+    style DT fill:#14532d,stroke:#22c55e,color:#e2e8f0
+    style STR fill:#3b0764,stroke:#a855f7,color:#e2e8f0
+    style TSK fill:#3b0764,stroke:#a855f7,color:#e2e8f0
+    style VIEW fill:#451a03,stroke:#f59e0b,color:#e2e8f0
+    style OUT fill:#881337,stroke:#fb7185,color:#e2e8f0
+</pre>
+</div>
+
+<div class="note">
+  <strong>Design decision:</strong> <code>CURRENT_DATE()</code> blocks INCREMENTAL refresh on DTs. Solution: the DT stores raw fulfillment data (no date functions), and the view computes live risk scores at query time. The stream watches the DT for changes, and the triggered task reads the view for up-to-date risk levels.
+</div>
+
+
+<!-- ========== REFERENCE TABLE ========== -->
+<h2>7. Complete Reference: Agent &rarr; Tool &rarr; Skill &rarr; MCP</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Agent</th>
+      <th>Tools (type: generic)</th>
+      <th>Skills (SKILL.md)</th>
+      <th>MCP Servers</th>
+      <th>Cortex Analyst</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>SUPPLY_CHAIN_AGENT</strong><br/>(primary router)</td>
+      <td>GENERATE_SCORECARD<br/>CREATE_PURCHASE_ORDER<br/>UPDATE_SUPPLIER_RATING<br/>TRIGGER_EXPEDITE<br/>UPDATE_ALERT_JIRA<br/>data_to_chart</td>
+      <td><em>None</em> (delegates to sub-agents)</td>
+      <td>ATLASSIAN_MCP<br/>GMAIL</td>
+      <td>SupplyChainAnalyst</td>
+    </tr>
+    <tr>
+      <td><strong>PROCUREMENT_AGENT</strong></td>
+      <td>GENERATE_SCORECARD<br/>CREATE_PURCHASE_ORDER<br/>UPDATE_SUPPLIER_RATING</td>
+      <td>supplier_scorecard<br/>cost_analyzer<br/>reorder_advisor</td>
+      <td>ATLASSIAN_MCP<br/>GMAIL</td>
+      <td>SupplyChainAnalyst</td>
+    </tr>
+    <tr>
+      <td><strong>PLANNING_AGENT</strong></td>
+      <td><em>None</em> (analytics only)</td>
+      <td>demand_planner<br/>reorder_advisor</td>
+      <td><em>None</em></td>
+      <td>SupplyChainAnalyst</td>
+    </tr>
+    <tr>
+      <td><strong>LOGISTICS_AGENT</strong></td>
+      <td>TRIGGER_EXPEDITE<br/>UPDATE_ALERT_JIRA</td>
+      <td>shipment_tracker</td>
+      <td>ATLASSIAN_MCP<br/>GMAIL</td>
+      <td>SupplyChainAnalyst</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>CoCo Automation</th>
+      <th>Schedule</th>
+      <th>Queries (DTs/Views)</th>
+      <th>MCP</th>
+      <th>Delivery</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>LOGISTICS_DAILY_BRIEF</strong></td>
+      <td>Weekdays 7:30 AM IST</td>
+      <td>SHIPMENTS, V_ORDER_FULFILLMENT,<br/>DT_DELIVERY_PERF, ALERTS</td>
+      <td>GMAIL</td>
+      <td>Email to os93152@gmail.com</td>
+    </tr>
+    <tr>
+      <td><strong>PLANNING_DAILY_BRIEF</strong></td>
+      <td>Weekdays 8:00 AM IST</td>
+      <td>DT_INVENTORY_POSITION,<br/>V_ORDER_FULFILLMENT, ORDERS</td>
+      <td>GMAIL</td>
+      <td>Email to os93152@gmail.com</td>
+    </tr>
+    <tr>
+      <td><strong>PROCUREMENT_DAILY_BRIEF</strong></td>
+      <td>Weekdays 8:30 AM IST</td>
+      <td>SUPPLIERS, DT_LANDED_COST,<br/>DT_INVENTORY_POSITION, ALERTS</td>
+      <td>GMAIL</td>
+      <td>Email to os93152@gmail.com</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Custom Tool</th><th>Type</th><th>Called By</th><th>Writes To</th><th>Triggers MCP?</th><th>Guardrails</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>GENERATE_SCORECARD</td><td>UDF</td><td>PROCUREMENT, PRIMARY</td><td>None (read-only)</td><td>No</td><td>N/A</td></tr>
+    <tr><td>CREATE_PURCHASE_ORDER</td><td>SP</td><td>PROCUREMENT, PRIMARY</td><td>PURCHASE_ORDERS</td><td>Yes &rarr; Jira</td><td>Part/supplier validation, user confirm</td></tr>
+    <tr><td>UPDATE_SUPPLIER_RATING</td><td>SP</td><td>PROCUREMENT, PRIMARY</td><td>SUPPLIERS</td><td>No</td><td>Max 1-tier, requires reason</td></tr>
+    <tr><td>TRIGGER_EXPEDITE</td><td>SP</td><td>LOGISTICS, PRIMARY</td><td>SHIPMENTS/ORDERS, ALERTS</td><td>Yes &rarr; Jira</td><td>48h dedup, 3x cap, record check, user confirm</td></tr>
+    <tr><td>UPDATE_ALERT_JIRA</td><td>SP</td><td>LOGISTICS, PRIMARY</td><td>ALERTS, SHIPMENTS/ORDERS</td><td>No (post-MCP)</td><td>Checks open alert without ticket</td></tr>
+  </tbody>
+</table>
+</div>
+
+
+<script src="/libs/mermaid@10.9.6/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'strict',
+    theme: 'dark',
+    flowchart: { curve: 'basis', useMaxWidth: true },
+    sequence: { useMaxWidth: true, mirrorActors: false }
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,35 @@
+-- ============================================================
+-- Automation 3: PROCUREMENT_DAILY_BRIEF
+-- Team: Procurement
+-- Cadence: Weekdays at 8:30 AM IST (Asia/Kolkata)
+-- MCP: SUPPLY_CHAIN_DB.SCM.GMAIL (email), SUPPLY_CHAIN_DB.SCM.SLACK_MCP (Slack alerts)
+-- Read-only: Yes (default RSS)
+-- ============================================================
+--
+-- Deploy via CoCo CLI:
+--
+-- cortex automation create \
+--   --name PROCUREMENT_DAILY_BRIEF \
+--   --schedule "weekdays at 8:30am" \
+--   --timezone "Asia/Kolkata" \
+--   --mcp SUPPLY_CHAIN_DB.SCM.GMAIL \
+--   --mcp SUPPLY_CHAIN_DB.SCM.SLACK_MCP \
+--   --no-workspace \
+--   --prompt-file "12_automations/procurement_daily_brief_prompt.md"
+--
+-- Test first (one-shot dry run):
+--   cortex automation create \
+--     --name PROCUREMENT_DAILY_BRIEF_TEST \
+--     --schedule "in 2 minutes" \
+--     --timezone "Asia/Kolkata" \
+--     --mcp SUPPLY_CHAIN_DB.SCM.GMAIL \
+--     --mcp SUPPLY_CHAIN_DB.SCM.SLACK_MCP \
+--     --no-workspace \
+--     --prompt-file "12_automations/procurement_daily_brief_prompt.md"
+--
+-- Management:
+--   cortex automation list
+--   cortex automation doctor PROCUREMENT_DAILY_BRIEF
+--   cortex automation suspend PROCUREMENT_DAILY_BRIEF
+--   cortex automation resume PROCUREMENT_DAILY_BRIEF
+--   cortex automation drop PROCUREMENT_DAILY_BRIEF

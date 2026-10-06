@@ -1,0 +1,19 @@
+spec:
+  containers:
+    - name: streamlit
+      image: /supply_chain_db/scm/sc_image_repo/sc_streamlit:latest
+      env:
+        SNOWFLAKE_WAREHOUSE: COMPUTE_WH
+        SNOWFLAKE_DATABASE: SUPPLY_CHAIN_DB
+        SNOWFLAKE_SCHEMA: SCM
+      resources:
+        requests:
+          memory: 1Gi
+          cpu: 0.5
+        limits:
+          memory: 2Gi
+          cpu: 1
+  endpoints:
+    - name: streamlit
+      port: 8501
+      public: true

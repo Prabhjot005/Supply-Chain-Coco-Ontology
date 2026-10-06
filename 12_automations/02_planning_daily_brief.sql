@@ -1,0 +1,35 @@
+-- ============================================================
+-- Automation 2: PLANNING_DAILY_BRIEF
+-- Team: Planning
+-- Cadence: Weekdays at 8:00 AM IST (Asia/Kolkata)
+-- MCP: SUPPLY_CHAIN_DB.SCM.GMAIL (email), SUPPLY_CHAIN_DB.SCM.SLACK_MCP (Slack alerts)
+-- Read-only: Yes (default RSS)
+-- ============================================================
+--
+-- Deploy via CoCo CLI:
+--
+-- cortex automation create \
+--   --name PLANNING_DAILY_BRIEF \
+--   --schedule "weekdays at 8:00am" \
+--   --timezone "Asia/Kolkata" \
+--   --mcp SUPPLY_CHAIN_DB.SCM.GMAIL \
+--   --mcp SUPPLY_CHAIN_DB.SCM.SLACK_MCP \
+--   --no-workspace \
+--   --prompt-file "12_automations/planning_daily_brief_prompt.md"
+--
+-- Test first (one-shot dry run):
+--   cortex automation create \
+--     --name PLANNING_DAILY_BRIEF_TEST \
+--     --schedule "in 2 minutes" \
+--     --timezone "Asia/Kolkata" \
+--     --mcp SUPPLY_CHAIN_DB.SCM.GMAIL \
+--     --mcp SUPPLY_CHAIN_DB.SCM.SLACK_MCP \
+--     --no-workspace \
+--     --prompt-file "12_automations/planning_daily_brief_prompt.md"
+--
+-- Management:
+--   cortex automation list
+--   cortex automation doctor PLANNING_DAILY_BRIEF
+--   cortex automation suspend PLANNING_DAILY_BRIEF
+--   cortex automation resume PLANNING_DAILY_BRIEF
+--   cortex automation drop PLANNING_DAILY_BRIEF

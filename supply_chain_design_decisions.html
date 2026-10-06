@@ -1,0 +1,2151 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>Supply Chain Ontology â€” Design Decisions</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-10-03",
+    "intent": "Design decision tracker for Supply Chain Ontology project â€” base tables, dynamic tables, streams, tasks, and audit strategy",
+    "sections": [
+      { "id": "base-tables", "title": "Base Tables", "producerNotes": "9 tables split into master (Access History) and operational (Time Travel 90d)" },
+      { "id": "dynamic-tables", "title": "Dynamic Tables", "producerNotes": "4 DTs with TARGET_LAG auto-refresh and Time Travel 90d" },
+      { "id": "streams", "title": "Streams", "producerNotes": "Reduced from 9 to 3 â€” only action-driven streams kept" },
+      { "id": "tasks", "title": "Tasks", "producerNotes": "Reduced from 9 to 3 â€” paired with streams for alerts" },
+      { "id": "audit", "title": "Audit Strategy", "producerNotes": "Hybrid: Access History + Time Travel replaces custom audit table" },
+      { "id": "skills", "title": "Skills", "producerNotes": "3 discussed: supplier_scorecard (merged with GENERATE_SCORECARD), reorder_advisor (uses demand_planner, editable confirmation), shipment_tracker (unified TRIGGER_EXPEDITE with Jira auto-close)" },
+      { "id": "custom-tools", "title": "Custom Tools", "producerNotes": "3 tools: GENERATE_SCORECARD (UDF, read-only), CREATE_PURCHASE_ORDER (SP, confirmation + editable), TRIGGER_EXPEDITE (SP, unified shipment/order, Jira + Slack + auto-close)" },
+      { "id": "guardrails", "title": "Guardrails", "producerNotes": "Confirmation flow, editable fields, data freshness, duplicate checks, sanity checks, escalation caps" }
+    ]
+  }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+      max-width: 960px; width: 100%; box-sizing: border-box;
+      margin: 0 auto; padding: clamp(16px, 4vw, 32px);
+      color: light-dark(#1f2937, #e5e7eb);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.6;
+    }
+    h1 { color: light-dark(#0f172a, #f1f5f9); font-size: 1.8rem; margin-bottom: 4px; }
+    h2 { color: light-dark(#1e40af, #60a5fa); font-size: 1.35rem; margin-top: 40px; border-bottom: 2px solid light-dark(#dbeafe, #1e3a5f); padding-bottom: 6px; }
+    h3 { color: light-dark(#374151, #cbd5e1); font-size: 1.1rem; margin-top: 24px; margin-bottom: 8px; }
+    .subtitle { color: light-dark(#6b7280, #9ca3af); font-size: 0.95rem; margin-bottom: 32px; }
+    .table-wrap { overflow-x: auto; margin: 12px 0 20px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 8px 12px; text-align: left; vertical-align: top; }
+    th { background: light-dark(#f0f4ff, #1e293b); font-weight: 600; color: light-dark(#1e3a5f, #93c5fd); }
+
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 12px;
+      font-size: 0.78rem; font-weight: 600; letter-spacing: 0.3px;
+    }
+    .selected { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); }
+    .rejected { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); }
+    .partial  { background: light-dark(#fef9c3, #422006); color: light-dark(#854d0e, #fde68a); }
+
+    .decision-card {
+      background: light-dark(#f8fafc, #1e293b);
+      border: 1px solid light-dark(#e2e8f0, #334155);
+      border-radius: 8px; padding: 16px 20px; margin: 16px 0;
+    }
+    .decision-card h4 { margin: 0 0 8px 0; color: light-dark(#1e40af, #93c5fd); font-size: 1rem; }
+    .decision-card p { margin: 4px 0; font-size: 0.9rem; }
+    .reason { color: light-dark(#4b5563, #9ca3af); font-style: italic; font-size: 0.88rem; }
+
+    .flow-diagram {
+      background: light-dark(#f1f5f9, #0f172a);
+      border: 1px solid light-dark(#cbd5e1, #334155);
+      border-radius: 8px; padding: 20px; margin: 16px 0;
+      font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.82rem;
+      white-space: pre; overflow-x: auto; line-height: 1.5;
+      color: light-dark(#334155, #cbd5e1);
+    }
+
+    .summary-box {
+      background: light-dark(#eff6ff, #172554);
+      border-left: 4px solid light-dark(#3b82f6, #60a5fa);
+      border-radius: 0 8px 8px 0; padding: 14px 20px; margin: 20px 0;
+    }
+    .summary-box strong { color: light-dark(#1e40af, #93c5fd); }
+
+    .count-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin: 16px 0;
+    }
+    .count-card {
+      background: light-dark(#f0f4ff, #1e293b);
+      border: 1px solid light-dark(#dbeafe, #334155);
+      border-radius: 8px; padding: 14px; text-align: center;
+    }
+    .count-card .num { font-size: 1.8rem; font-weight: 700; color: light-dark(#1e40af, #60a5fa); }
+    .count-card .label { font-size: 0.82rem; color: light-dark(#6b7280, #9ca3af); margin-top: 2px; }
+
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 24px 0; font-size: 0.85rem; }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+
+    img, svg { max-width: 100%; height: auto; }
+    a { color: light-dark(#2563eb, #60a5fa); }
+  </style>
+</head>
+<body>
+
+  <h1>Supply Chain Ontology â€” Design Decisions</h1>
+  <p class="subtitle">Decision log for base tables, dynamic tables, streams, tasks, audit strategy, skills, tools, agents, RBAC, automations, and Streamlit app.<br>Last updated: October 4, 2026</p>
+
+  <div class="legend">
+    <div class="legend-item"><span class="badge selected">SELECTED</span> Approach we chose</div>
+    <div class="legend-item"><span class="badge rejected">REJECTED</span> Approach we ruled out</div>
+    <div class="legend-item"><span class="badge partial">PARTIAL</span> Used for a subset</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="base-tables">1. Base Tables</h2>
+  <p>9 tables representing the supply chain ontology: Supplier &#8594; Part &#8594; Plant &#8594; Shipment &#8594; Order &#8594; Customer + Inventory.</p>
+
+  <h3>Tables</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Table</th><th>Type</th><th>Purpose</th><th>Audit Method</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>SUPPLIERS</td><td>Master</td><td>Supplier master data (name, country, lead time, quality rating)</td><td>Access History</td></tr>
+        <tr><td>PARTS</td><td>Master</td><td>Part/SKU catalog (description, category, unit cost, weight)</td><td>Access History</td></tr>
+        <tr><td>PLANTS</td><td>Master</td><td>Manufacturing/warehouse locations (city, country, capacity)</td><td>Access History</td></tr>
+        <tr><td>CUSTOMERS</td><td>Master</td><td>Customer master (name, segment, region)</td><td>Access History</td></tr>
+        <tr><td>SHIPMENTS</td><td>Operational</td><td>Shipment headers (dates, carrier, freight cost, priority, expedited_at, jira_ticket_id)</td><td>Time Travel 90d</td></tr>
+        <tr><td>SHIPMENT_LINES</td><td>Operational</td><td>Shipment line items (part, quantity, unit cost)</td><td>Time Travel 90d</td></tr>
+        <tr><td>ORDERS</td><td>Operational</td><td>Customer order headers (dates, status, priority, expedited_at, jira_ticket_id)</td><td>Time Travel 90d</td></tr>
+        <tr><td>ORDER_LINES</td><td>Operational</td><td>Order line items (part, quantity, price, fulfilled qty)</td><td>Time Travel 90d</td></tr>
+        <tr><td>INVENTORY</td><td>Operational</td><td>Current stock positions (on hand, safety stock, reorder point)</td><td>Time Travel 90d</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decision: How to split audit responsibility</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Uniform streams + audit table for all 9 tables</h4>
+    <p>Original plan: 9 streams + 9 tasks + 1 MASTER_DATA_AUDIT table = 19 extra objects.</p>
+    <p class="reason">Why rejected: Over-engineered. Master data (SUPPLIERS, PARTS, PLANTS, CUSTOMERS) rarely changes &#8212; dedicated CDC infrastructure is unnecessary overhead. Snowflake provides built-in alternatives that cover audit needs with zero objects to manage.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Split by data profile</h4>
+    <p><strong>Master tables (4):</strong> Access History &#8212; 365 days built-in, tracks who queried/modified, no objects to create. Sufficient for data that changes rarely.</p>
+    <p><strong>Operational tables (5):</strong> Time Travel with DATA_RETENTION_TIME_IN_DAYS = 90. Shipments and orders complete within this window. Allows querying any historical state on demand.</p>
+    <p class="reason">Why selected: Right tool for each data profile. No custom infrastructure to maintain. Access History can't fail or go stale. Time Travel is always-on. Eliminates 19 objects (9 streams, 9 tasks, 1 audit table).</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Time Travel for master tables too</h4>
+    <p>Could set 90-day retention on SUPPLIERS, PARTS, PLANTS, CUSTOMERS as well.</p>
+    <p class="reason">Why rejected: Master data is active long-term &#8212; a supplier added 6 months ago is still relevant. Time Travel's 90-day max window doesn't cover the full lifecycle. Access History's 365-day retention is a better fit, and query-level tracking is sufficient for rare changes.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="dynamic-tables">2. Dynamic Tables</h2>
+  <p>4 pre-aggregated analytical tables with INCREMENTAL refresh, TARGET_LAG = 1 hour, and 90-day Time Travel. Time-dependent risk scoring is computed by V_ORDER_FULFILLMENT view at query time.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Dynamic Table</th><th>Source Joins</th><th>Canonical Metrics</th><th>Refresh Mode</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>DT_DELIVERY_PERF</td>
+          <td>SHIPMENTS &#215; SUPPLIERS &#215; PLANTS</td>
+          <td>OTD %, avg lead time, late shipment count</td>
+          <td>INCREMENTAL</td>
+        </tr>
+        <tr>
+          <td>DT_ORDER_FULFILLMENT</td>
+          <td>ORDERS &#215; ORDER_LINES &#215; INVENTORY &#215; CUSTOMERS &#215; PLANTS</td>
+          <td>Fill Rate %, stock coverage days (raw data &#8212; risk scoring in view)</td>
+          <td>INCREMENTAL</td>
+        </tr>
+        <tr>
+          <td>DT_INVENTORY_POSITION</td>
+          <td>INVENTORY &#215; PARTS &#215; PLANTS &#215; ORDER_LINES</td>
+          <td>Days of Inventory, stockout risk, reorder candidates</td>
+          <td>INCREMENTAL</td>
+        </tr>
+        <tr>
+          <td>DT_LANDED_COST</td>
+          <td>SHIPMENTS &#215; SHIPMENT_LINES &#215; PARTS &#215; SUPPLIERS &#215; PLANTS</td>
+          <td>Landed cost per unit, freight share %, duty estimate</td>
+          <td>INCREMENTAL</td>
+        </tr>
+        <tr>
+          <td><strong>V_ORDER_FULFILLMENT</strong> (view)</td>
+          <td>DT_ORDER_FULFILLMENT</td>
+          <td>Risk score (0&#8211;12), risk level, risk reason, days remaining</td>
+          <td>Live (computed per query using CURRENT_DATE)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decision: Refresh mode</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; FULL refresh (auto-selected by Snowflake)</h4>
+    <p>Initial deployment: Snowflake auto-selected FULL for all 4 DTs due to CURRENT_DATE() usage and complex CTEs.</p>
+    <p class="reason">Why rejected: FULL refresh re-executes the entire query each cycle. It also prevents creating streams on DTs (streams require INCREMENTAL refresh for change tracking). Without streams, TASK_ORDER_RISK_ALERT had to use schedule-based polling instead of event-driven triggers.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; INCREMENTAL refresh + view layer for time-dependent calculations</h4>
+    <p>Removed CURRENT_DATE() from all DT queries. Moved time-dependent risk scoring to V_ORDER_FULFILLMENT view (computed at query time). Explicitly set REFRESH_MODE = INCREMENTAL on all 4 DTs.</p>
+    <p class="reason">Why selected: (1) INCREMENTAL processes only changed rows &#8212; faster at scale. (2) Enables streams on DTs &#8212; STREAM_ORDER_RISK now works on DT_ORDER_FULFILLMENT. (3) All 3 tasks are stream-triggered (event-driven, not polling). (4) Risk scores are always fresh because the view computes them with CURRENT_DATE() at query time.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Keep CURRENT_DATE in DTs and accept FULL refresh</h4>
+    <p>Pre-compute risk_score, risk_level, days_remaining directly in DT_ORDER_FULFILLMENT.</p>
+    <p class="reason">Why rejected: Blocks INCREMENTAL refresh. Blocks streams on the DT. Forces schedule-based polling for order risk alerts. Risk scores would only be accurate at refresh time, not query time. The view layer solves all of these while keeping risk scores live.</p>
+  </div>
+
+  <h3>V_ORDER_FULFILLMENT &#8212; view architecture</h3>
+  <div class="flow-diagram">
+  DT_ORDER_FULFILLMENT (INCREMENTAL)
+  Stores: order_id, customer, plant, fulfillment_ratio, stock_coverage_days
+  Does NOT store: risk_score, risk_level, days_remaining (time-dependent)
+       |
+       v
+  V_ORDER_FULFILLMENT (view &#8212; computed per query)
+  Adds: days_remaining = DATEDIFF(CURRENT_DATE, requested_date)
+        risk_score (0-12) = f1_stock + f2_fulfillment + f3_shipment + f4_urgency
+        risk_level = LOW / MEDIUM / HIGH / CRITICAL
+        risk_reason = human-readable explanation
+       |
+       +&#8594; Semantic view, agents, Streamlit, automations all query this view
+       +&#8594; STREAM_ORDER_RISK on the DT triggers TASK_ORDER_RISK_ALERT
+            which reads V_ORDER_FULFILLMENT for live risk_level</div>
+
+  <h3>Decision: Audit for dynamic tables</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Streams on dynamic tables for audit</h4>
+    <p>Place a stream on each DT to track how aggregated metrics change over time.</p>
+    <p class="reason">Why rejected: Dynamic tables are derived data &#8212; auditing the source base tables is sufficient. Adding audit streams on DTs doubles the CDC infrastructure for no additional governance value. Exception: STREAM_ORDER_RISK on DT_ORDER_FULFILLMENT is kept, but for action triggers, not audit.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Time Travel (90 days) on dynamic tables</h4>
+    <p>Allows querying past metric states: &#8220;What was the OTD% for Supplier X two weeks ago?&#8221;</p>
+    <p class="reason">Why selected: Zero infrastructure. Covers the operational lifecycle. Metrics older than 90 days can be captured in scheduled reports if needed.</p>
+  </div>
+
+  <h3>Risk Scoring Logic (DT_ORDER_FULFILLMENT)</h3>
+  <p>Composite score from 4 factors, range 0&#8211;12:</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Factor</th><th>0 (Safe)</th><th>1 (Watch)</th><th>2 (Warning)</th><th>3 (Critical)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Stock Coverage (days)</td><td>&gt; 14</td><td>7 &#8211; 14</td><td>3 &#8211; 7</td><td>&lt; 3</td></tr>
+        <tr><td>Fulfillment Ratio</td><td>&#8805; 90%</td><td>50 &#8211; 89%</td><td>1 &#8211; 49%</td><td>0%</td></tr>
+        <tr><td>Inbound Shipment</td><td>On time / early</td><td>In transit, on schedule</td><td>Late 1&#8211;3 days</td><td>Late 4+ days / none</td></tr>
+        <tr><td>Days to Requested Date</td><td>&gt; 14</td><td>7 &#8211; 14</td><td>3 &#8211; 7</td><td>&lt; 3 / past due</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Score</th><th>Risk Level</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0 &#8211; 2</td><td>LOW</td><td>On track, no concerns</td></tr>
+        <tr><td>3 &#8211; 5</td><td>MEDIUM</td><td>Some signals &#8212; monitor closely</td></tr>
+        <tr><td>6 &#8211; 8</td><td>HIGH</td><td>Likely delay &#8212; action needed</td></tr>
+        <tr><td>9 &#8211; 12</td><td>CRITICAL</td><td>Almost certain delay &#8212; escalate immediately</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="streams">3. Streams</h2>
+  <p>Reduced from 9 to 3. Each stream exists solely for event-driven alerts and actions &#8212; not for feeding dynamic tables (DTs auto-refresh from base tables independently).</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Stream</th><th>On Table</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>STREAM_SHIPMENTS</td><td>SHIPMENTS</td><td>Captures delivery changes &#8212; triggers alerts on late arrivals or date shifts</td></tr>
+        <tr><td>STREAM_INVENTORY</td><td>INVENTORY</td><td>Captures stock drops &#8212; triggers alerts when inventory falls below safety stock</td></tr>
+        <tr><td>STREAM_ORDER_RISK</td><td>DT_ORDER_FULFILLMENT</td><td>Captures risk score changes &#8212; triggers alerts when orders flip to HIGH/CRITICAL</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decisions: Which streams to keep</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; 9 streams (one per base table)</h4>
+    <p>Original plan: stream every table for comprehensive CDC.</p>
+    <p class="reason">Why rejected: Most base tables don't need real-time action triggers. Master data (SUPPLIERS, PARTS, PLANTS, CUSTOMERS) rarely changes. Detail tables (SHIPMENT_LINES, ORDER_LINES) are covered by their parent table streams. Audit is handled by Access History and Time Travel instead.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; 4 streams (SUPPLIERS, SHIPMENTS, INVENTORY, ORDER_RISK)</h4>
+    <p>Intermediate proposal: keep STREAM_SUPPLIERS for procurement governance.</p>
+    <p class="reason">Why rejected: Supplier data changes are rare and don't require real-time action. Access History adequately tracks who modified supplier records. Removed to keep streams focused on high-frequency operational events.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; 3 streams (SHIPMENTS, INVENTORY, ORDER_RISK)</h4>
+    <p>Only streams that drive operational actions: late shipment alerts, low stock alerts, and order risk escalation.</p>
+    <p class="reason">Why selected: Each stream is paired with a task that takes real action (Slack, Jira, expedite). No stream exists purely for logging. This is the minimum set needed for the event-driven pipeline.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="tasks">4. Tasks</h2>
+  <p>Reduced from 9 to 3. Each task is paired with a stream and performs alert/action logic &#8212; not audit logging.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Task</th><th>Triggered By</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>TASK_SHIPMENT_DELAY_ALERT</td>
+          <td>STREAM_SHIPMENTS</td>
+          <td>Detects late deliveries &#8594; Slack/Jira alert, can trigger TRIGGER_EXPEDITE</td>
+        </tr>
+        <tr>
+          <td>TASK_INVENTORY_LOW_ALERT</td>
+          <td>STREAM_INVENTORY</td>
+          <td>Detects stock below reorder point &#8594; Slack alert, can trigger reorder_advisor skill</td>
+        </tr>
+        <tr>
+          <td>TASK_ORDER_RISK_ALERT</td>
+          <td>STREAM_ORDER_RISK</td>
+          <td>Detects orders flipping to HIGH/CRITICAL &#8594; inserts into SUPPLY_CHAIN_ALERTS, Slack/Jira, expedite</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decisions: Task scope</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; 9 audit tasks (one per stream)</h4>
+    <p>Original plan: each task consumes its stream and writes to MASTER_DATA_AUDIT.</p>
+    <p class="reason">Why rejected: Audit responsibility moved to Time Travel + Access History. No custom audit table needed. Tasks should perform actions, not duplicate built-in Snowflake capabilities.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; 1 task (ORDER_RISK_ALERT only)</h4>
+    <p>Intermediate proposal: only the risk alert task, since DT_ORDER_FULFILLMENT already aggregates signals.</p>
+    <p class="reason">Why rejected: Left STREAM_SHIPMENTS and STREAM_INVENTORY without corresponding actions. Those streams capture valuable operational events (late deliveries, stock drops) that should trigger immediate responses independent of the order risk pipeline.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; 3 action tasks (one per stream)</h4>
+    <p>Each stream paired with a task that takes real action: alerts, Jira tickets, expedites, reorder triggers.</p>
+    <p class="reason">Why selected: Complete event-driven pipeline. Every stream has a consumer. Every task produces a visible business outcome. No orphaned streams or tasks doing redundant work.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="audit">5. Audit Strategy</h2>
+  <p>Hybrid approach using Snowflake built-in features instead of custom audit infrastructure.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Data Profile</th><th>Tables</th><th>Audit Method</th><th>Retention</th><th>Objects Created</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Master / reference</td>
+          <td>SUPPLIERS, PARTS, PLANTS, CUSTOMERS</td>
+          <td>Access History</td>
+          <td>365 days (built-in)</td>
+          <td>None</td>
+        </tr>
+        <tr>
+          <td>Operational</td>
+          <td>SHIPMENTS, SHIPMENT_LINES, ORDERS, ORDER_LINES, INVENTORY</td>
+          <td>Time Travel</td>
+          <td>90 days</td>
+          <td>None</td>
+        </tr>
+        <tr>
+          <td>Dynamic tables</td>
+          <td>DT_DELIVERY_PERF, DT_ORDER_FULFILLMENT, DT_INVENTORY_POSITION, DT_LANDED_COST</td>
+          <td>Time Travel</td>
+          <td>90 days</td>
+          <td>None</td>
+        </tr>
+        <tr>
+          <td>Risk detection</td>
+          <td>DT_ORDER_FULFILLMENT &#8594; SUPPLY_CHAIN_ALERTS</td>
+          <td>Stream + Task</td>
+          <td>Real-time</td>
+          <td>1 stream + 1 task</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Approaches evaluated</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Custom audit table (MASTER_DATA_AUDIT)</h4>
+    <p>Dedicated table logging every row-level change from all 9 base tables via streams + tasks.</p>
+    <p class="reason">Why rejected: Required 9 streams + 9 tasks + 1 table = 19 objects. Custom infrastructure that reimplements what Snowflake provides natively. Tasks can fail silently, creating audit gaps. Time Travel and Access History are always-on and maintained by Snowflake.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Time Travel for everything</h4>
+    <p>Set 90-day retention on all tables uniformly.</p>
+    <p class="reason">Why rejected: Master data has a lifecycle longer than 90 days. A supplier added 6 months ago is still active. Access History's 365-day window and query-level tracking better suits rarely-changing, long-lived data.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Access History for everything</h4>
+    <p>Rely solely on ACCOUNT_USAGE.ACCESS_HISTORY for all audit needs.</p>
+    <p class="reason">Why rejected: Access History tracks query-level access, not row-level changes. For high-churn operational tables (INVENTORY, SHIPMENTS), you need to see exactly which rows changed &#8212; Time Travel provides that capability. Access History alone can't answer &#8220;what was the stock level for Part #P100 at Plant Chicago two weeks ago?&#8221;</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Hybrid: Access History (master) + Time Travel (operational)</h4>
+    <p>Each data profile gets the audit method that matches its change frequency and lifecycle.</p>
+    <p class="reason">Why selected: Zero custom objects for audit. Right granularity for each table type. No infrastructure to maintain, monitor, or troubleshoot. Built-in features can't fail or go stale.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="pipeline">6. Event-Driven Pipeline (Final Architecture)</h2>
+
+  <div class="flow-diagram">
+  SHIPMENTS table          INVENTORY table
+  (Time Travel 90d)        (Time Travel 90d)
+       |                        |
+       v                        v
+  STREAM_SHIPMENTS         STREAM_INVENTORY
+       |                        |
+       v                        v
+  TASK_SHIPMENT_            TASK_INVENTORY_
+  DELAY_ALERT               LOW_ALERT
+  &#8594; Slack/Jira              &#8594; Slack alert
+  &#8594; TRIGGER_EXPEDITE        &#8594; reorder_advisor
+       |                        |
+       +--------+---------------+
+                |
+                v
+      DT_ORDER_FULFILLMENT (INCREMENTAL refresh via TARGET_LAG)
+      Joins: ORDERS x ORDER_LINES x INVENTORY x CUSTOMERS x PLANTS
+      Stores: fulfillment_ratio, stock_coverage_days (time-independent)
+                |                        |
+                v                        v
+      V_ORDER_FULFILLMENT         STREAM_ORDER_RISK
+      (view: risk_score,           (CDC on DT changes)
+       risk_level, risk_reason            |
+       &#8212; uses CURRENT_DATE)              v
+                                  TASK_ORDER_RISK_ALERT
+                                  Reads V_ORDER_FULFILLMENT for risk_level
+                                  &#8594; SUPPLY_CHAIN_ALERTS table
+                                  &#8594; Slack / Jira / TRIGGER_EXPEDITE</div>
+
+  <!-- ============================================================ -->
+  <h2 id="summary">7. Final Object Count</h2>
+
+  <div class="count-grid">
+    <div class="count-card"><div class="num">9</div><div class="label">Base Tables</div></div>
+    <div class="count-card"><div class="num">4</div><div class="label">Dynamic Tables</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">View (V_ORDER_FULFILLMENT)</div></div>
+    <div class="count-card"><div class="num">3</div><div class="label">Streams</div></div>
+    <div class="count-card"><div class="num">3</div><div class="label">Tasks</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">Alerts Table</div></div>
+    <div class="count-card"><div class="num">5</div><div class="label">Masking Policies</div></div>
+    <div class="count-card"><div class="num">26</div><div class="label">Total (Data Layer)</div></div>
+  </div>
+
+  <div class="summary-box">
+    <strong>Reduction from original plan:</strong> Data layer went from 47 objects down to 26. Eliminated 19 audit-only objects (9 streams, 9 tasks, 1 audit table) by using Snowflake built-in features. Reduced remaining streams from 9 to 3 and tasks from 9 to 3 &#8212; each now drives real business actions, not redundant logging. Added V_ORDER_FULFILLMENT view to enable INCREMENTAL refresh on DTs while keeping live risk scoring.
+  </div>
+
+  <h3>Full project object count</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Category</th><th>Count</th><th>Objects</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Base Tables</td><td>9</td><td>SUPPLIERS, PARTS, PLANTS, CUSTOMERS, SHIPMENTS, SHIPMENT_LINES, ORDERS, ORDER_LINES, INVENTORY</td></tr>
+        <tr><td>Alerts Table</td><td>1</td><td>SUPPLY_CHAIN_ALERTS</td></tr>
+        <tr><td>Dynamic Tables (INCREMENTAL)</td><td>4</td><td>DT_DELIVERY_PERF, DT_ORDER_FULFILLMENT, DT_INVENTORY_POSITION, DT_LANDED_COST</td></tr>
+        <tr><td>Views</td><td>2</td><td>V_ORDER_FULFILLMENT (risk scoring), V_DEMAND_TRAINING_DATA (ML input)</td></tr>
+        <tr><td>Masking Policies</td><td>5</td><td>COST_DATA_MASK, SUPPLIER_DETAIL_MASK, CUSTOMER_DATA_MASK, SAFETY_STOCK_MASK, REORDER_POINT_MASK</td></tr>
+        <tr><td>Streams</td><td>3</td><td>STREAM_SHIPMENTS, STREAM_INVENTORY, STREAM_ORDER_RISK</td></tr>
+        <tr><td>Tasks</td><td>3</td><td>TASK_SHIPMENT_DELAY_ALERT, TASK_INVENTORY_LOW_ALERT, TASK_ORDER_RISK_ALERT</td></tr>
+        <tr><td>Custom Tools (UDF + SPs)</td><td>4</td><td>GENERATE_SCORECARD, CREATE_PURCHASE_ORDER, TRIGGER_EXPEDITE, UPDATE_SUPPLIER_RATING</td></tr>
+        <tr><td>ML Model</td><td>1</td><td>DEMAND_FORECAST_MODEL (multi-series)</td></tr>
+        <tr><td>Skills (SKILL.md on stage)</td><td>5</td><td>supplier_scorecard, reorder_advisor, shipment_tracker, demand_planner, cost_analyzer</td></tr>
+        <tr><td>Semantic View</td><td>1</td><td>SUPPLY_CHAIN_ONTOLOGY (11 entities, 4 metrics, 14 verified queries)</td></tr>
+        <tr><td>Cortex Agents</td><td>4</td><td>SUPPLY_CHAIN_AGENT (primary), PROCUREMENT_AGENT, PLANNING_AGENT, LOGISTICS_AGENT</td></tr>
+        <tr><td>Stage</td><td>1</td><td>SKILL_STAGE</td></tr>
+        <tr><td>Roles</td><td>5</td><td>SUPPLY_CHAIN_ADMIN, SC_AGENT_ROLE, PROCUREMENT_ROLE, PLANNING_ROLE, LOGISTICS_ROLE</td></tr>
+        <tr><td>Streamlit App</td><td>1</td><td>Supply Chain Analyst (persona-aware, 9 pages, NL interface)</td></tr>
+        <tr><td>CoCo Automations</td><td>3</td><td>LOGISTICS_DAILY_BRIEF, PLANNING_DAILY_BRIEF, PROCUREMENT_DAILY_BRIEF</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="skills">8. Skills</h2>
+  <p>Prompt-based SKILL.md packages that guide the agent on how to analyze, interpret, and recommend. Skills don&#8217;t execute code directly &#8212; the agent uses Cortex Analyst and custom tools to carry out the skill&#8217;s logic. Published to SKILL_STAGE for reuse across agents.</p>
+
+  <h3>Skills vs Custom Tools</h3>
+  <div class="summary-box">
+    <strong>Key distinction:</strong> Skills teach the agent <em>how to think</em> about a problem (flexible, analytical). Custom tools give the agent <em>predefined actions to call</em> (deterministic, safe). Analytical work &#8594; skill. Write actions &#8594; custom tool with guardrails.
+  </div>
+
+  <h3>Skill 1: supplier_scorecard</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Purpose</td><td>Rank and evaluate suppliers by composite performance score. Flag underperformers. Recommend supplier for reorders.</td></tr>
+        <tr><td>Data sources</td><td>DT_DELIVERY_PERF (OTD, lead time), DT_LANDED_COST (cost), SUPPLIERS (quality rating)</td></tr>
+        <tr><td>Calls</td><td>GENERATE_SCORECARD UDF &#8594; returns raw numeric score per supplier</td></tr>
+        <tr><td>Skill adds</td><td>Interprets the score: ranks suppliers, compares alternatives, flags underperformers, recommends best supplier for a given part</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Separate skill + separate GENERATE_SCORECARD UDF (no connection)</h4>
+    <p>Original plan had both operating independently &#8212; duplicating scoring logic in two places.</p>
+    <p class="reason">Why rejected: The scoring formula (OTD weight + quality weight + cost weight) is deterministic and belongs in a UDF. The interpretation (ranking, flagging, recommending) is analytical and belongs in a skill. Keeping them separate caused duplication.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Merged: skill calls the UDF, then interprets results</h4>
+    <p>GENERATE_SCORECARD UDF computes the raw score. The supplier_scorecard skill calls it, then layers on analysis: ranking, comparison, flagging, and recommendations.</p>
+    <p class="reason">Why selected: Single source of truth for the formula (UDF). Rich analytical layer on top (skill). No duplication. The UDF is also reusable independently by other skills (e.g., reorder_advisor uses it to pick the best supplier).</p>
+  </div>
+
+  <h3>Skill 2: reorder_advisor</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Purpose</td><td>Analyze inventory positions, calculate optimal reorder quantity and timing, recommend supplier, and create purchase orders after user approval.</td></tr>
+        <tr><td>Data sources</td><td>DT_INVENTORY_POSITION (DOI, stock levels), SUPPLIERS (lead times)</td></tr>
+        <tr><td>Calls</td><td>demand_planner skill &#8594; forecast. GENERATE_SCORECARD UDF &#8594; supplier ranking. CREATE_PURCHASE_ORDER SP &#8594; after confirmation.</td></tr>
+        <tr><td>Triggered by</td><td>TASK_INVENTORY_LOW_ALERT (automated) or user question (ad-hoc)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Dependency chain</h4>
+  <div class="flow-diagram">
+  reorder_advisor skill
+    |
+    +-- calls: demand_planner skill
+    |     +-- Uses pre-trained ML FORECAST model (multi-series, no retraining)
+    |     +-- Returns: avg_daily_demand, trend_direction, projected_30d_demand,
+    |                  confidence_range (lower/upper bounds), seasonality_detected
+    |
+    +-- calls: GENERATE_SCORECARD UDF
+    |     +-- Returns: ranked suppliers with composite scores
+    |
+    +-- reads: DT_INVENTORY_POSITION (current stock, DOI, safety stock)
+    +-- reads: SUPPLIERS (lead times for urgency calculation)
+    |
+    +-- guardrail checks (freshness, duplicates, sanity, budget)
+    |
+    +-- presents recommendation to user
+    |     +-- User can EDIT quantity and supplier
+    |     +-- Agent confirms back with updated numbers
+    |
+    +-- executes: CREATE_PURCHASE_ORDER (after final confirmation)</div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Compute demand trends internally in reorder_advisor</h4>
+    <p>Original approach: reorder_advisor calculates its own demand forecast from ORDER_LINES.</p>
+    <p class="reason">Why rejected: Duplicates demand logic. The demand_planner skill is purpose-built for forecasting &#8212; it handles rolling averages, trend detection, and seasonality. Reusing it keeps demand logic in one place and gives reorder_advisor a better forecast.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Call demand_planner skill for forecast, editable confirmation flow</h4>
+    <p>reorder_advisor delegates forecasting to demand_planner, uses GENERATE_SCORECARD for supplier selection, and presents an editable recommendation. User can adjust quantity and supplier before the order is created.</p>
+    <p class="reason">Why selected: No duplicated logic. User stays in control &#8212; can override quantity and supplier. Confirm-back loop after edits prevents typos. Guardrails (freshness, duplicates, sanity) still apply to edited values.</p>
+  </div>
+
+  <h4>Editable confirmation flow</h4>
+  <div class="flow-diagram">
+  Agent presents recommendation:
+    "Part #P100 at Plant Chicago:
+     Current stock: 80 units (DOI: 2.1 days)
+     Projected 30-day demand: 1,140 units (rising 15%)
+
+     Recommended order:
+       Quantity:  1,260 units
+       Supplier:  S12 - Acme Components (score: 8.7/10)
+       Lead time: 7 days  |  Est. cost: $18,900
+
+     Alternative suppliers:
+       S05 - GlobalParts Inc  (score: 7.9, 10 days, $17,640)
+       S21 - Pacific Supply Co (score: 7.2, 5 days, $20,160)
+
+     Shall I create this purchase order?
+     You can adjust the quantity or choose a different supplier."
+
+  User: "Change quantity to 1000 and use GlobalParts"
+
+  Agent confirms back:
+    "Updated: 1,000 units from S05 - GlobalParts Inc
+     Lead time: 10 days  |  Est. cost: $14,000
+     Confirm?"
+
+  User: "Yes"  &#8594;  CREATE_PURCHASE_ORDER executes</div>
+
+  <h3>Skill 3: shipment_tracker</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Purpose</td><td>Track in-transit shipments, classify risk status, estimate revised ETAs using historical carrier performance, recommend whether to expedite.</td></tr>
+        <tr><td>Data sources</td><td>SHIPMENTS (in-transit: actual_delivery IS NULL), DT_DELIVERY_PERF (historical OTD), DT_ORDER_FULFILLMENT (impacted orders + risk scores), SUPPLIERS (lead times)</td></tr>
+        <tr><td>Calls</td><td>TRIGGER_EXPEDITE SP &#8594; after user confirmation</td></tr>
+        <tr><td>Triggered by</td><td>TASK_SHIPMENT_DELAY_ALERT (automated) or user question (ad-hoc)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Shipment classification logic</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Status</th><th>Condition</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>ON_TRACK</td><td>days_until_expected &gt; 3 AND carrier historically on time</td><td>No action</td></tr>
+        <tr><td>AT_RISK</td><td>days_until_expected 1&#8211;3 OR carrier historically late on this route</td><td>Monitor</td></tr>
+        <tr><td>DELAYED</td><td>Past expected_delivery, no actual_delivery recorded</td><td>Recommend expedite</td></tr>
+        <tr><td>CRITICAL</td><td>Delayed AND linked to HIGH/CRITICAL risk orders</td><td>Strongly recommend expedite</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Revised ETA calculation</h4>
+  <p>Derived from historical SHIPMENTS data &#8212; no separate carrier table needed:</p>
+  <div class="flow-diagram">
+  For each carrier + route combination:
+    avg_delay = AVG(actual_delivery - expected_delivery) from historical shipments
+    late_rate = COUNT(late) / COUNT(total)
+
+  revised_eta = expected_delivery + avg_delay (if carrier tends to be late)
+
+  Confidence level:
+    HIGH:   50+ historical shipments for this carrier/route
+    MEDIUM: 10-49 historical shipments
+    LOW:    fewer than 10 (disclose to user)</div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Separate carrier performance reference table</h4>
+    <p>Create and maintain a dedicated table tracking carrier metrics.</p>
+    <p class="reason">Why rejected: Historical SHIPMENTS already contains carrier, expected_delivery, and actual_delivery. We can derive avg delay and late rate directly. Adding a reference table means another object to maintain and keep in sync.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Derive carrier performance from historical SHIPMENTS</h4>
+    <p>Query SHIPMENTS WHERE actual_delivery IS NOT NULL, grouped by carrier, to compute avg delay and late rate per carrier/route.</p>
+    <p class="reason">Why selected: Zero additional objects. Always up-to-date (uses the same table being tracked). Confidence level disclosure when data is limited prevents overreliance on thin samples.</p>
+  </div>
+
+  <h3>Skill dependency map</h3>
+  <div class="flow-diagram">
+  supplier_scorecard
+    +-- calls: GENERATE_SCORECARD UDF
+
+  reorder_advisor
+    +-- calls: demand_planner skill (ML forecast)
+    +-- calls: GENERATE_SCORECARD UDF (supplier ranking)
+    +-- calls: CREATE_PURCHASE_ORDER SP (after confirmation)
+
+  shipment_tracker
+    +-- calls: TRIGGER_EXPEDITE SP (after confirmation)
+
+  demand_planner (shared dependency)
+    +-- used by: reorder_advisor
+    +-- reads: ORDER_LINES + ORDERS (training data for ML FORECAST)
+    +-- uses: Snowflake ML FORECAST function
+
+  cost_analyzer
+    +-- reads: DT_LANDED_COST (cost breakdown)
+    +-- reads: DT_DELIVERY_PERF (OTD for quality cross-reference)
+    +-- reads: SUPPLIERS (country for duty rates)
+    +-- calls: GENERATE_SCORECARD UDF (supplier quality scores)
+
+  supplier_scorecard (via UPDATE_SUPPLIER_RATING)
+    +-- calls: GENERATE_SCORECARD UDF (compute score)
+    +-- calls: UPDATE_SUPPLIER_RATING SP (after confirmation)</div>
+
+  <h3>Skill 4: demand_planner</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Purpose</td><td>Forecast demand by part/plant using Snowflake ML FORECAST. Detect trends, seasonality, and anomalies. Returns projections with confidence intervals.</td></tr>
+        <tr><td>Data sources</td><td>ORDER_LINES (quantity history), ORDERS (order dates)</td></tr>
+        <tr><td>Used by</td><td>reorder_advisor (as dependency), also standalone for ad-hoc demand questions</td></tr>
+        <tr><td>Calls</td><td>No custom tools &#8212; pure analysis, read-only. Uses Snowflake ML FORECAST function.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>ML Forecast flow</h4>
+  <div class="flow-diagram">
+  demand_planner skill
+    |
+    +-- TRAINING (one-time, rebuild on demand)
+    |
+    |   Step 1: PREPARE TRAINING DATA
+    |     SELECT order_date,
+    |            part_id || '_' || plant_id AS part_plant_key,
+    |            SUM(quantity) AS daily_demand
+    |     FROM ORDERS JOIN ORDER_LINES
+    |     GROUP BY order_date, part_plant_key
+    |
+    |   Step 2: BUILD MULTI-SERIES FORECAST MODEL (once)
+    |     CREATE SNOWFLAKE.ML.FORECAST demand_forecast_model(
+    |       INPUT_DATA =&gt; training_data,
+    |       SERIES_COLNAME =&gt; 'part_plant_key',
+    |       TIMESTAMP_COLNAME =&gt; 'order_date',
+    |       TARGET_COLNAME =&gt; 'daily_demand'
+    |     )
+    |     One model handles ALL part/plant combinations
+    |     Automatically handles: seasonality, trend, holidays
+    |     Stored as a Snowflake object &#8212; persists until rebuilt
+    |
+    +-- INFERENCE (every query, no retraining)
+    |
+    |   Step 3: GENERATE 30-DAY FORECAST (per series)
+    |     CALL demand_forecast_model!FORECAST(
+    |       FORECASTING_PERIODS =&gt; 30,
+    |       SERIES =&gt; 'P100_CHICAGO'
+    |     )
+    |     Returns: date, forecast_value, lower_bound, upper_bound
+    |     Uses pre-trained model &#8212; does NOT retrain
+    |
+    +-- Step 4: INTERPRET RESULTS
+    |     projected_30d_demand = SUM(forecast_value)
+    |     confidence_range = lower_bound to upper_bound
+    |     trend = compare first 15 days vs last 15 days
+    |
+    +-- Return:
+          avg_daily_demand, projected_30d_demand,
+          trend_direction, confidence_range,
+          seasonality_detected (yes/no with pattern)</div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Manual rolling averages and trend detection</h4>
+    <p>Compute demand trends using simple 30-day rolling averages and percentage comparison of recent vs older periods.</p>
+    <p class="reason">Why rejected: Cannot detect seasonality patterns (weekly, monthly, quarterly). Provides only a point estimate with no confidence range. Custom statistical code to maintain. More prone to outlier distortion.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Snowflake ML FORECAST function (multi-series)</h4>
+    <p>Uses built-in FORECAST with SERIES_COLNAME for multi-series support. One model trained once covers all part/plant combinations. Each query runs inference only &#8212; no retraining. Model is rebuilt on demand when staleness guardrail triggers. Falls back to rolling averages when insufficient training data (&lt; 60 days).</p>
+    <p class="reason">Why selected: Single model object for all series. Train once, query many times. Automatic seasonality and confidence intervals. No per-query training cost.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Individual models per part/plant combination</h4>
+    <p>Create a separate forecast model for each part_id + plant_id pair (e.g., demand_model_P100_CHICAGO).</p>
+    <p class="reason">Why rejected: Hundreds of models to manage and retrain. More granular control is not needed &#8212; Snowflake&#8217;s multi-series FORECAST handles per-series patterns within a single model.</p>
+  </div>
+
+  <h4>Guardrails (demand_planner)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Guardrail</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Minimum training data</td><td>ML FORECAST needs at least 2 seasonal cycles. If &lt; 60 days of history, fall back to 30-day rolling average and disclose: &#8220;Insufficient data for ML forecast &#8212; using rolling average instead.&#8221;</td></tr>
+        <tr><td>Confidence interval disclosure</td><td>Always show the range, not just the point estimate: &#8220;Projected demand: 1,140 units (range: 980 &#8211; 1,300).&#8221;</td></tr>
+        <tr><td>Outlier in training data</td><td>If a single day&#8217;s demand &gt; 5x the median, flag: &#8220;Training data includes a spike on Oct 1 (2,000 units vs median 200). This may inflate the forecast.&#8221; Let user decide whether to exclude.</td></tr>
+        <tr><td>Zero demand warning</td><td>If no orders in last 30 days, skip ML and say: &#8220;No demand recorded. Part may be discontinued or seasonal.&#8221;</td></tr>
+        <tr><td>Model staleness</td><td>If model was built &gt; 7 days ago and new orders have arrived, recommend rebuilding: &#8220;Forecast model is 10 days old &#8212; 45 new orders since last build.&#8221;</td></tr>
+        <tr><td>Forecast vs actual divergence</td><td>If a previous forecast exists, compare against actuals: &#8220;Last forecast predicted 380 units &#8212; actual was 520 (37% higher). Demand may be accelerating.&#8221;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Skill 5: cost_analyzer</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Purpose</td><td>Break down landed cost into components, compare suppliers on total cost, cross-reference cost vs quality, analyze trends, and identify savings opportunities.</td></tr>
+        <tr><td>Data sources</td><td>DT_LANDED_COST (cost per unit), DT_DELIVERY_PERF (OTD for cross-reference), SUPPLIERS (country for duty rates)</td></tr>
+        <tr><td>Calls</td><td>GENERATE_SCORECARD UDF &#8594; supplier quality scores for cost-quality matrix</td></tr>
+        <tr><td>Used by</td><td>Standalone &#8212; procurement and finance personas</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Step-by-step mechanics</h4>
+  <div class="flow-diagram">
+  cost_analyzer skill
+    |
+    +-- Step 1: GATHER RAW COST DATA (from DT_LANDED_COST)
+    |     Per shipment line:
+    |       material_cost    = unit_cost (from SHIPMENT_LINES)
+    |       freight_per_unit = freight_cost / total_quantity (from SHIPMENTS)
+    |       duty_estimate    = unit_cost * duty_rate_by_country
+    |       landed_cost      = material + freight + duty
+    |
+    |     Duty rates (CASE by origin country):
+    |       China: 7.5%  |  India: 5%  |  Germany: 2%
+    |       Mexico: 1%   |  Default: 3%
+    |
+    +-- Step 2: COST BREAKDOWN (per supplier per part, last 90 days)
+    |     Group by supplier_id, part_id
+    |     Compute: avg_material, avg_freight, avg_duty, avg_landed
+    |     Include: shipment_count (sample size)
+    |
+    +-- Step 3: CROSS-REFERENCE WITH QUALITY
+    |     Call GENERATE_SCORECARD UDF for each supplier
+    |     Pull OTD% from DT_DELIVERY_PERF
+    |     Build cost-quality matrix:
+    |       supplier, landed_cost, score, otd%
+    |     NEVER recommend cheaper supplier without showing quality
+    |
+    +-- Step 4: TREND ANALYSIS
+    |     Current month avg vs prior 3 months avg
+    |     Break down which component is driving changes:
+    |       material_change, freight_change, duty_change
+    |     Flag significant increases with root cause
+    |
+    +-- Step 5: SAVINGS OPPORTUNITIES
+          Compare all suppliers per part
+          Filter: alt supplier must have score &gt;= 7.0 AND OTD &gt;= 80%
+          Calculate: annual_savings = (current - alt) * annual_volume
+          Rank by annual savings potential
+          Flag misleading savings (material cheaper but landed is not)</div>
+
+  <h4>Example outputs</h4>
+  <div class="flow-diagram">
+  Cost Breakdown by Supplier (Part #P100, last 90 days)
+
+  Supplier         Material  Freight  Duty   Landed   Shipments
+  ---------------------------------------------------------------
+  S12 Acme         $12.00    $1.80    $0.90  $14.70   18
+  S05 GlobalParts  $11.20    $3.10    $0.56  $14.86   12
+  S21 Pacific      $13.50    $0.90    $0.68  $15.08    7
+
+  Cost vs Quality Matrix
+
+  Supplier         Landed   Score  OTD%   Verdict
+  -------------------------------------------------
+  S12 Acme         $14.70   8.7    92%    Best overall
+  S05 GlobalParts  $14.86   7.9    85%    Lower reliability
+  S21 Pacific      $15.08   7.2    78%    Cheapest freight, worst OTD
+
+  Cost Trend (S12 Acme, Part #P100)
+
+  Period           Material  Freight  Duty   Landed   Change
+  ---------------------------------------------------------------
+  Jul-Sep avg      $11.50    $1.50    $0.86  $13.86   baseline
+  October          $12.00    $1.80    $0.90  $14.70   +6.1%
+  Primary driver: Freight +20% (carrier rate hike)</div>
+
+  <h4>Guardrails (cost_analyzer)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Guardrail</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Incomplete cost data</td><td>If freight_cost is NULL for some shipments, exclude from averages and disclose: &#8220;Excludes 3 of 15 shipments (missing freight data). Averages may be skewed.&#8221;</td></tr>
+        <tr><td>Small sample warning</td><td>If &lt; 5 shipments for a supplier/part combo, warn: &#8220;Only 3 shipments from Supplier B &#8212; cost estimate may not be representative.&#8221;</td></tr>
+        <tr><td>Cost vs quality mandatory</td><td>Never present a cheaper supplier without showing OTD% and quality score. If cheaper option has OTD &lt; 80% or score &lt; 7.0, explicitly flag it.</td></tr>
+        <tr><td>Duty rate transparency</td><td>Disclose that duty rates are estimates: &#8220;Duty rates are approximations by country &#8212; consult trade compliance for exact rates.&#8221;</td></tr>
+        <tr><td>Stale data check</td><td>If DT_LANDED_COST has not refreshed in 24+ hours, warn before presenting numbers.</td></tr>
+        <tr><td>Misleading savings flag</td><td>If a &#8220;saving&#8221; disappears when freight is included (material cheaper but landed is not), explicitly call it out.</td></tr>
+        <tr><td>Currency consistency</td><td>Verify all costs are in the same currency. If mixed, disclose and convert before comparing.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="custom-tools">9. Custom Tools</h2>
+  <p>Stored procedures and UDFs registered on the Cortex Agent for deterministic actions. Write-action tools require user confirmation. Read-only tools execute freely.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tool</th><th>Type</th><th>Read/Write</th><th>Confirmation</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>GENERATE_SCORECARD</td>
+          <td>UDF</td>
+          <td>Read-only</td>
+          <td>No</td>
+          <td>Computes composite supplier score (OTD weight + quality weight + cost weight). Returns numeric score per supplier.</td>
+        </tr>
+        <tr>
+          <td>CREATE_PURCHASE_ORDER</td>
+          <td>Stored Procedure</td>
+          <td>Write</td>
+          <td>Yes &#8212; editable</td>
+          <td>Inserts a new PO into ORDERS + ORDER_LINES. User can edit quantity and supplier before final confirmation.</td>
+        </tr>
+        <tr>
+          <td>TRIGGER_EXPEDITE</td>
+          <td>Stored Procedure</td>
+          <td>Write</td>
+          <td>Yes</td>
+          <td>Unified expedite for both shipments and orders. Updates priority, creates Jira ticket (assigned to team), sends Slack alert with ticket number. Jira auto-closes on resolution.</td>
+        </tr>
+        <tr>
+          <td>UPDATE_SUPPLIER_RATING</td>
+          <td>Stored Procedure</td>
+          <td>Write</td>
+          <td>Yes</td>
+          <td>Updates supplier quality rating. Supports both data-driven changes (from supplier_scorecard analysis) and manual overrides with reason logging. Parameters: supplier_id, new_rating, reason, override (boolean).</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decision: TRIGGER_EXPEDITE scope</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Separate expedite tools for shipments and orders</h4>
+    <p>Two stored procedures: EXPEDITE_SHIPMENT and EXPEDITE_ORDER.</p>
+    <p class="reason">Why rejected: The expedite logic is nearly identical &#8212; update priority, create Jira ticket, send Slack alert, auto-close on resolution. Splitting it means duplicated code and two tools to maintain. The only difference is the record type, which can be a parameter.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Unified TRIGGER_EXPEDITE with expedite_type parameter</h4>
+    <p>Single stored procedure handles both shipments and orders. Takes expedite_type (&#8216;SHIPMENT&#8217; or &#8216;ORDER&#8217;), record_id, reason, priority, affected_orders, and affected_customers as parameters.</p>
+    <p class="reason">Why selected: One tool, one codebase. Jira ticket assignment routes to the right team based on type (shipment &#8594; logistics team, order &#8594; fulfillment team). Consistent Slack alert format. Single auto-close mechanism.</p>
+  </div>
+
+  <h3>TRIGGER_EXPEDITE &#8212; full flow</h3>
+  <div class="flow-diagram">
+  TRIGGER_EXPEDITE called
+       |
+       v
+  Step 1: VALIDATE
+    - Record exists and is eligible
+    - Not already expedited in last 48 hours (guardrail)
+    - If fail &#8594; return error, no action
+       |
+       v
+  Step 2: UPDATE SNOWFLAKE RECORD
+    - SET priority = 'EXPEDITED', expedited_at = CURRENT_TIMESTAMP
+    - Applies to SHIPMENTS or ORDERS based on expedite_type
+       |
+       v
+  Step 3: CREATE JIRA TICKET (via MCP)
+    - Title: "[EXPEDITE] Shipment #SH-4821 - 5 days late, CRITICAL"
+    - Assignee: Logistics team (shipment) or Fulfillment team (order)
+    - Priority: mapped from our priority
+    - Labels: expedite, shipment-delay or order-delay
+    - Returns: JIRA_TICKET_ID (e.g., SCO-1234)
+       |
+       v
+  Step 4: SEND SLACK ALERT (via MCP)
+    - Channel: #supply-chain-alerts
+    - Includes: record details, impact, Jira ticket link
+       |
+       v
+  Step 5: LOG TO SUPPLY_CHAIN_ALERTS
+    - alert_type, record_type, record_id, jira_ticket_id,
+      slack_message_ts, status = 'OPEN'</div>
+
+  <h3>Jira auto-close on resolution</h3>
+  <div class="flow-diagram">
+  Shipment arrives (actual_delivery set)  |  Order fulfilled (all lines complete)
+       |                                         |
+       v                                         v
+  STREAM_SHIPMENTS captures change     STREAM_ORDER_RISK captures change
+       |                                         |
+       v                                         v
+  TASK_SHIPMENT_DELAY_ALERT            TASK_ORDER_RISK_ALERT
+       |                                         |
+       +------ Both tasks check: ----------------+
+       |
+       v
+  Query SUPPLY_CHAIN_ALERTS WHERE record_id = X AND status = 'OPEN'
+       |
+       +-- If found:
+       |     +-- Close Jira ticket (transition to "Done", add resolution comment)
+       |     +-- Update Slack thread ("Resolved - delivered/fulfilled")
+       |     +-- Update SUPPLY_CHAIN_ALERTS: status = 'RESOLVED', resolved_at = NOW()
+       |
+       +-- If not found: normal processing, no auto-close needed</div>
+
+  <h3>Jira ticket assignment</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Expedite Type</th><th>Jira Project Board</th><th>Assigned To</th><th>Labels</th></tr></thead>
+      <tbody>
+        <tr><td>SHIPMENT</td><td>Supply Chain Ops</td><td>Logistics team</td><td>expedite, shipment-delay</td></tr>
+        <tr><td>ORDER</td><td>Supply Chain Ops</td><td>Fulfillment team</td><td>expedite, order-delay</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decision: Jira tickets for TASK_INVENTORY_LOW_ALERT</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Create Jira ticket when inventory drops low</h4>
+    <p>TASK_INVENTORY_LOW_ALERT would create a Jira ticket in addition to the Slack alert.</p>
+    <p class="reason">Why rejected: The inventory low alert directly feeds into reorder_advisor &#8594; CREATE_PURCHASE_ORDER. The resolution is a purchase order, not a Jira ticket. Creating both a ticket and a PO is redundant &#8212; the PO is the action item. Slack alert is sufficient for visibility.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Slack alert only, then reorder_advisor flow</h4>
+    <p>TASK_INVENTORY_LOW_ALERT sends a Slack alert and triggers reorder_advisor, which handles the response (recommend &#8594; user edits &#8594; confirm &#8594; CREATE_PURCHASE_ORDER).</p>
+    <p class="reason">Why selected: The PO is the action item, not a Jira ticket. Avoids ticket clutter. Slack provides immediate visibility. The full reorder flow (with editable confirmation) is the proper resolution path.</p>
+  </div>
+
+  <h3>Decision: UPDATE_SUPPLIER_RATING tool</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Merge into supplier_scorecard &#8212; auto-compute only</h4>
+    <p>Remove the tool. Let GENERATE_SCORECARD auto-compute ratings. The quality_rating column becomes a derived value recalculated periodically.</p>
+    <p class="reason">Why rejected: Cannot handle edge cases where human override is needed &#8212; a supplier had a one-time disaster but is otherwise excellent, or a new supplier has no history and needs a provisional rating.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Keep as standalone tool with data-driven and manual override modes</h4>
+    <p>Separate stored procedure called by supplier_scorecard skill after analysis. Supports data-driven changes (override=FALSE) and manual overrides (override=TRUE, requires reason). Both modes require user confirmation.</p>
+    <p class="reason">Why selected: Handles both automated and manual workflows. Override audit trail distinguishes data-driven from human decisions. Rating change cap prevents drastic swings. Impact disclosure shows downstream effects.</p>
+  </div>
+
+  <h4>UPDATE_SUPPLIER_RATING flow</h4>
+  <div class="flow-diagram">
+  supplier_scorecard skill runs analysis
+    "Supplier S12 OTD dropped to 68% (was 85%).
+     Quality score: 6.2/10.
+     Recommend downgrading rating from A to B."
+
+  Agent shows impact:
+    "S12 is currently preferred for 4 parts.
+     Downgrading to B will cause reorder_advisor
+     to recommend alternate suppliers for these parts."
+
+  User: "Yes, downgrade them"
+    UPDATE_SUPPLIER_RATING(S12, 'B', 'OTD decline to 68%', override=FALSE)
+
+  ---- OR (manual override) ----
+
+  User: "Set Supplier S30 to rating A - new strategic partner"
+    Agent: "S30 has no shipment history. Rating will be manual override.
+       This makes S30 eligible as preferred supplier. Confirm?"
+    UPDATE_SUPPLIER_RATING(S30, 'A', 'New strategic partner', override=TRUE)</div>
+
+  <h4>Guardrails (UPDATE_SUPPLIER_RATING)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Guardrail</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>User confirmation</td><td>Always required. Shows current rating, proposed rating, and justification.</td></tr>
+        <tr><td>Rating change cap</td><td>Max 1 tier per update (A to B ok, A to D blocked).</td></tr>
+        <tr><td>Recent change check</td><td>If rating changed in last 7 days, warn before allowing another change.</td></tr>
+        <tr><td>Override audit</td><td>If override=TRUE, require user-provided reason. Logged separately from data-driven changes.</td></tr>
+        <tr><td>Impact disclosure</td><td>Show downstream effects: how many parts use this supplier, what reorder_advisor will change.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decision: Alert table naming</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; ORDER_ALERTS</h4>
+    <p>Original name for the table storing all pipeline alerts.</p>
+    <p class="reason">Why rejected: Table stores alerts for shipments, inventory, and orders &#8212; not just orders. Name was misleading about the table scope.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; SUPPLY_CHAIN_ALERTS</h4>
+    <p>Renamed to reflect all alert types: shipment delays, inventory lows, and order risk escalations. The alert_type column distinguishes between types.</p>
+    <p class="reason">Why selected: Accurate scope. Single table for the entire pipeline. alert_type column handles differentiation.</p>
+  </div>
+
+  <h3>Decision: Jira ticket ID storage</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Store jira_ticket_id only in SUPPLY_CHAIN_ALERTS</h4>
+    <p>Jira ticket number lives only in the alerts table, not on the source record.</p>
+    <p class="reason">Why rejected: Looking at SHIPMENTS or ORDERS directly shows no Jira linkage. The traceability is hidden in a separate table.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Store jira_ticket_id on both SUPPLY_CHAIN_ALERTS and source tables</h4>
+    <p>TRIGGER_EXPEDITE writes jira_ticket_id to SUPPLY_CHAIN_ALERTS (alert lifecycle) and the source record in SHIPMENTS or ORDERS (direct visibility). Added columns on SHIPMENTS and ORDERS: priority, expedited_at, jira_ticket_id.</p>
+    <p class="reason">Why selected: Full traceability. Query SHIPMENTS directly to see the Jira ticket. Query SUPPLY_CHAIN_ALERTS for alert lifecycle. Single step update.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="guardrails">10. Guardrails</h2>
+  <p>Every write-action tool requires user confirmation before executing. Read-only tools and UDFs execute freely. Additional guardrails prevent dangerous or erroneous actions.</p>
+
+  <h3>Confirmation matrix</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tool</th><th>Confirmation</th><th>Editable Fields</th><th>Confirm-Back After Edit</th></tr></thead>
+      <tbody>
+        <tr><td>GENERATE_SCORECARD</td><td>No (read-only)</td><td>N/A</td><td>N/A</td></tr>
+        <tr><td>CREATE_PURCHASE_ORDER</td><td>Yes &#8212; always</td><td>Quantity, Supplier</td><td>Yes &#8212; agent shows updated cost/lead time before final execute</td></tr>
+        <tr><td>TRIGGER_EXPEDITE</td><td>Yes &#8212; always</td><td>Priority</td><td>Yes</td></tr>
+        <tr><td>UPDATE_SUPPLIER_RATING</td><td>Yes &#8212; always</td><td>N/A</td><td>N/A (shows impact disclosure instead)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Guardrails per tool</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Guardrail</th><th>Applies To</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Data freshness check</td><td>All skills</td><td>If source data is stale (e.g., inventory not updated in 24+ hours), warn: &#8220;Data is 36 hours old &#8212; recommendation may not reflect current stock.&#8221;</td></tr>
+        <tr><td>Quantity sanity check</td><td>CREATE_PURCHASE_ORDER</td><td>If quantity &gt; 3x average order size, flag: &#8220;This order is 4x typical &#8212; demand spike or anomaly?&#8221; Re-runs after user edits.</td></tr>
+        <tr><td>Duplicate order check</td><td>CREATE_PURCHASE_ORDER</td><td>If similar PO exists for same part/supplier/plant in last 7 days, warn: &#8220;Similar order placed 3 days ago &#8212; proceed?&#8221;</td></tr>
+        <tr><td>Budget / quantity limits</td><td>CREATE_PURCHASE_ORDER</td><td>Configurable max quantity and max cost per single PO. Hard reject if exceeded.</td></tr>
+        <tr><td>Duplicate expedite check</td><td>TRIGGER_EXPEDITE</td><td>If same record was expedited in last 48 hours, warn: &#8220;Already expedited 18 hours ago (SCO-1230). Expedite again?&#8221;</td></tr>
+        <tr><td>Escalation cap</td><td>TRIGGER_EXPEDITE</td><td>Max 3 expedites per shipment/order. After that: &#8220;Expedited 3 times already &#8212; escalate to supplier management instead.&#8221;</td></tr>
+        <tr><td>Jira/Slack connectivity</td><td>TRIGGER_EXPEDITE</td><td>If MCP unreachable, log alert to SUPPLY_CHAIN_ALERTS anyway and warn: &#8220;Jira ticket could not be created &#8212; alert logged internally. Retry?&#8221;</td></tr>
+        <tr><td>Rating change cap</td><td>UPDATE_SUPPLIER_RATING</td><td>Max 1 tier change per update. A to B ok, A to D blocked.</td></tr>
+        <tr><td>Recent rating change</td><td>UPDATE_SUPPLIER_RATING</td><td>If rating changed in last 7 days, warn before allowing another change.</td></tr>
+        <tr><td>Override audit</td><td>UPDATE_SUPPLIER_RATING</td><td>If override=TRUE, require user-provided reason. Logged separately from data-driven changes.</td></tr>
+        <tr><td>Impact disclosure</td><td>UPDATE_SUPPLIER_RATING</td><td>Show downstream effects: how many parts use this supplier, what reorder_advisor will change.</td></tr>
+        <tr><td>Min training data (ML)</td><td>demand_planner</td><td>If &lt; 60 days of order history, fall back to rolling average and disclose.</td></tr>
+        <tr><td>Confidence intervals</td><td>demand_planner</td><td>Always show forecast range (lower/upper bounds), not just point estimate.</td></tr>
+        <tr><td>Outlier detection</td><td>demand_planner</td><td>If single day demand &gt; 5x median, flag: may inflate forecast. Let user decide.</td></tr>
+        <tr><td>Model staleness</td><td>demand_planner</td><td>If model &gt; 7 days old and new orders arrived, recommend rebuilding.</td></tr>
+        <tr><td>Incomplete cost data</td><td>cost_analyzer</td><td>If freight_cost missing for some shipments, exclude and disclose sample gap.</td></tr>
+        <tr><td>Cost vs quality mandatory</td><td>cost_analyzer</td><td>Never recommend cheaper supplier without showing OTD% and quality score alongside.</td></tr>
+        <tr><td>Misleading savings flag</td><td>cost_analyzer</td><td>If savings disappear when freight included, explicitly call it out.</td></tr>
+        <tr><td>Duty rate transparency</td><td>cost_analyzer</td><td>Disclose that duty rates are estimates by country of origin.</td></tr>
+        <tr><td>Confidence disclosure</td><td>All skills</td><td>If analysis is based on limited data (e.g., new supplier with &lt; 5 shipments), disclose: &#8220;Low confidence &#8212; only 3 historical shipments.&#8221;</td></tr>
+        <tr><td>Fallback response</td><td>All skills</td><td>If data is insufficient, say so explicitly instead of guessing: &#8220;Not enough order history to estimate demand for this part.&#8221;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Task alert behavior summary</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Task</th><th>Slack Alert</th><th>Jira Ticket</th><th>Auto-Close Jira</th><th>Write Action</th></tr></thead>
+      <tbody>
+        <tr><td>TASK_SHIPMENT_DELAY_ALERT</td><td>Yes</td><td>Yes (via TRIGGER_EXPEDITE)</td><td>Yes &#8212; when shipment arrives</td><td>TRIGGER_EXPEDITE</td></tr>
+        <tr><td>TASK_INVENTORY_LOW_ALERT</td><td>Yes</td><td>No</td><td>N/A</td><td>CREATE_PURCHASE_ORDER (via reorder_advisor)</td></tr>
+        <tr><td>TASK_ORDER_RISK_ALERT</td><td>Yes</td><td>Yes (via TRIGGER_EXPEDITE)</td><td>Yes &#8212; when order fulfilled or risk drops</td><td>TRIGGER_EXPEDITE</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="updated-summary">11. Updated Object Count</h2>
+
+  <div class="count-grid">
+    <div class="count-card"><div class="num">9</div><div class="label">Base Tables</div></div>
+    <div class="count-card"><div class="num">4</div><div class="label">Dynamic Tables</div></div>
+    <div class="count-card"><div class="num">3</div><div class="label">Streams</div></div>
+    <div class="count-card"><div class="num">3</div><div class="label">Tasks</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">Alerts Table</div></div>
+    <div class="count-card"><div class="num">5</div><div class="label">Skills</div></div>
+    <div class="count-card"><div class="num">4</div><div class="label">Custom Tools</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">Stage</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">ML Model</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">Semantic View</div></div>
+    <div class="count-card"><div class="num">4</div><div class="label">Cortex Agents</div></div>
+    <div class="count-card"><div class="num">5</div><div class="label">Roles</div></div>
+    <div class="count-card"><div class="num">5</div><div class="label">Masking Policies</div></div>
+    <div class="count-card"><div class="num">1</div><div class="label">Streamlit App</div></div>
+    <div class="count-card"><div class="num">47</div><div class="label">Total (Discussed)</div></div>
+  </div>
+
+  <div class="summary-box">
+    <strong>Skills &#38; tools decisions:</strong> Merged supplier_scorecard with GENERATE_SCORECARD UDF (no duplication). reorder_advisor delegates forecasting to demand_planner (multi-series ML FORECAST, train once, infer many). cost_analyzer provides 5-step landed cost analysis with cost-quality cross-referencing. TRIGGER_EXPEDITE unified for shipments and orders with Jira auto-close and team-based assignment. UPDATE_SUPPLIER_RATING kept standalone with data-driven and manual override modes. No Jira tickets for inventory alerts (PO is the action item). SUPPLY_CHAIN_ALERTS replaces ORDER_ALERTS. jira_ticket_id stored on both alerts table and source records for full traceability.
+  </div>
+
+  <h3>Remaining objects (not yet discussed)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Category</th><th>Count</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Automations</td><td>4</td><td>To be discussed</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="semantic-view">12. Semantic View (SUPPLY_CHAIN_ONTOLOGY)</h2>
+  <p>Single governed semantic layer that encodes business meaning so Cortex Analyst returns consistent answers regardless of who asks or how they phrase the question.</p>
+
+  <h3>Decision: Which tables to model</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Semantic view on dynamic tables only</h4>
+    <p>Model only the 4 DTs. Simpler &#8212; 4 tables instead of 13.</p>
+    <p class="reason">Why rejected: Cannot answer detail-level questions like &#8220;show me all shipments from Supplier X last month.&#8221; That data lives in base tables, not DTs. Limits the agent to aggregated answers only.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Semantic view on base tables only</h4>
+    <p>Model the raw entities and let Cortex Analyst compute metrics at query time.</p>
+    <p class="reason">Why rejected: Complex metric calculations (like risk score with 4 factors) are hard to express as semantic view measures. Cortex Analyst has to reconstruct what the DTs already compute. Slower and error-prone.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Semantic view on both base tables and dynamic tables</h4>
+    <p>Full ontology &#8212; base entities for detail queries, DTs for pre-computed metrics. Verified queries point to DTs for metrics (fast, consistent) and base tables for drill-down.</p>
+    <p class="reason">Why selected: Full coverage. &#8220;What is OTD for Supplier X?&#8221; hits DT_DELIVERY_PERF. &#8220;Show Supplier X&#8217;s last 10 shipments&#8221; hits SHIPMENTS. The semantic view routes to the right source. This delivers &#8220;any team asks cross-domain questions and gets one consistent answer.&#8221;</p>
+  </div>
+
+  <h3>Entities (logical tables in the semantic view)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Entity</th><th>Physical Source</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td>Suppliers</td><td>SUPPLIERS</td><td>Master &#8212; who supplies</td></tr>
+        <tr><td>Parts</td><td>PARTS</td><td>Master &#8212; what is being supplied</td></tr>
+        <tr><td>Plants</td><td>PLANTS</td><td>Master &#8212; where things go</td></tr>
+        <tr><td>Customers</td><td>CUSTOMERS</td><td>Master &#8212; who orders</td></tr>
+        <tr><td>Shipments</td><td>SHIPMENTS + SHIPMENT_LINES</td><td>Operational &#8212; inbound supply</td></tr>
+        <tr><td>Orders</td><td>ORDERS + ORDER_LINES</td><td>Operational &#8212; outbound demand</td></tr>
+        <tr><td>Inventory</td><td>INVENTORY</td><td>Operational &#8212; current stock</td></tr>
+        <tr><td>Delivery Performance</td><td>DT_DELIVERY_PERF</td><td>Analytical &#8212; supplier/carrier metrics</td></tr>
+        <tr><td>Order Fulfillment</td><td>DT_ORDER_FULFILLMENT</td><td>Analytical &#8212; risk scores, fill rate</td></tr>
+        <tr><td>Inventory Position</td><td>DT_INVENTORY_POSITION</td><td>Analytical &#8212; DOI, stockout risk</td></tr>
+        <tr><td>Landed Cost</td><td>DT_LANDED_COST</td><td>Analytical &#8212; cost breakdown</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Relationships</h3>
+  <div class="flow-diagram">
+  Suppliers --supplies--&gt; Parts
+  Suppliers --ships_via--&gt; Shipments
+  Parts --stocked_at--&gt; Plants (via Inventory)
+  Parts --ordered_in--&gt; Orders (via Order Lines)
+  Shipments --delivers_to--&gt; Plants
+  Orders --placed_by--&gt; Customers
+  Orders --fulfilled_from--&gt; Plants
+
+  Delivery Performance --aggregates--&gt; Shipments x Suppliers x Plants
+  Order Fulfillment --aggregates--&gt; Orders x Order Lines x Inventory x Shipments
+  Inventory Position --aggregates--&gt; Inventory x Parts x Plants
+  Landed Cost --aggregates--&gt; Shipments x Shipment Lines x Parts x Suppliers</div>
+
+  <h3>Canonical Metrics (4 measures)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>Definition</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>On-Time Delivery %</td><td>COUNT(actual_delivery &lt;= expected_delivery) / COUNT(*) * 100</td><td>DT_DELIVERY_PERF</td></tr>
+        <tr><td>Fill Rate %</td><td>SUM(fulfilled_quantity) / SUM(quantity) * 100</td><td>DT_ORDER_FULFILLMENT</td></tr>
+        <tr><td>Days of Inventory</td><td>on_hand_qty / avg_daily_demand</td><td>DT_INVENTORY_POSITION</td></tr>
+        <tr><td>Landed Cost per Unit</td><td>material_cost + freight_per_unit + duty_estimate</td><td>DT_LANDED_COST</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>These 4 metrics resolve identically across all personas &#8212; procurement, logistics, planning, and finance all get the same number for the same question.</p>
+
+  <h3>Dimensions (filterable attributes)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Dimension</th><th>Available On</th><th>Examples</th></tr></thead>
+      <tbody>
+        <tr><td>Supplier</td><td>All supplier-related entities</td><td>&#8220;for Supplier X&#8221;, &#8220;by supplier&#8221;</td></tr>
+        <tr><td>Part / SKU</td><td>All part-related entities</td><td>&#8220;for Part P100&#8221;, &#8220;by category&#8221;</td></tr>
+        <tr><td>Plant / Location</td><td>All plant-related entities</td><td>&#8220;at Plant Chicago&#8221;, &#8220;by country&#8221;</td></tr>
+        <tr><td>Customer</td><td>Orders</td><td>&#8220;for Customer RetailCorp&#8221;, &#8220;by segment&#8221;</td></tr>
+        <tr><td>Carrier</td><td>Shipments, Delivery Performance</td><td>&#8220;by carrier&#8221;, &#8220;for FastFreight&#8221;</td></tr>
+        <tr><td>Time</td><td>All operational + analytical</td><td>&#8220;last month&#8221;, &#8220;Q3&#8221;, &#8220;year over year&#8221;</td></tr>
+        <tr><td>Risk Level</td><td>Order Fulfillment</td><td>&#8220;show CRITICAL orders&#8221;, &#8220;HIGH risk&#8221;</td></tr>
+        <tr><td>Status</td><td>Orders, Shipments</td><td>&#8220;open orders&#8221;, &#8220;in transit shipments&#8221;</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Verified Queries (14)</h3>
+  <p>Pre-validated question-to-SQL mappings for high-value questions where Cortex Analyst must use exact formulas, correct joins, or specific threshold logic. For all other questions, Cortex Analyst generates SQL dynamically from dimensions, measures, and relationships.</p>
+
+  <h4>Core Metric Queries (4)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Question Pattern</th><th>Points To</th><th>Why Verified</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>What is the OTD for [supplier]?</td><td>DT_DELIVERY_PERF filtered by supplier</td><td>Must use exact OTD formula</td></tr>
+        <tr><td>2</td><td>What is the fill rate at [plant]?</td><td>DT_ORDER_FULFILLMENT filtered by plant</td><td>Must use exact fill rate formula</td></tr>
+        <tr><td>3</td><td>What is the DOI for [part] at [plant]?</td><td>DT_INVENTORY_POSITION filtered by part + plant</td><td>Division by avg demand &#8212; easy to miscalculate</td></tr>
+        <tr><td>4</td><td>What is the landed cost for [part] from [supplier]?</td><td>DT_LANDED_COST filtered by part + supplier</td><td>3-component sum must be exact</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Threshold and Logic Queries (4)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Question Pattern</th><th>Points To</th><th>Why Verified</th></tr></thead>
+      <tbody>
+        <tr><td>5</td><td>Which orders are at risk?</td><td>DT_ORDER_FULFILLMENT WHERE risk_level IN (&#8216;HIGH&#8217;, &#8216;CRITICAL&#8217;)</td><td>&#8220;At risk&#8221; must map to specific risk levels, not a guess</td></tr>
+        <tr><td>6</td><td>Which parts need reordering?</td><td>DT_INVENTORY_POSITION WHERE on_hand &lt; reorder_point</td><td>Must use reorder_point threshold, not safety_stock</td></tr>
+        <tr><td>7</td><td>Show all parts with less than 3 days of inventory</td><td>DT_INVENTORY_POSITION WHERE doi &lt; 3</td><td>Must compute DOI first then filter &#8212; not a simple column comparison</td></tr>
+        <tr><td>8</td><td>Show cost breakdown for [part]</td><td>DT_LANDED_COST filtered by part, returns material + freight + duty</td><td>Must return all 3 components, not just landed total</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Time-Series Trend Queries (2)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Question Pattern</th><th>Points To</th><th>Why Verified</th></tr></thead>
+      <tbody>
+        <tr><td>9</td><td>What is the OTD trend for [supplier] over the last 3 months?</td><td>DT_DELIVERY_PERF filtered by supplier, grouped by month</td><td>Must group by month correctly on the metric</td></tr>
+        <tr><td>10</td><td>What is the fill rate trend over the last 3 months?</td><td>DT_ORDER_FULFILLMENT grouped by month</td><td>Same &#8212; correct monthly grouping on core metric</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Cross-Metric Queries (4)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Question Pattern</th><th>Points To</th><th>Why Verified</th></tr></thead>
+      <tbody>
+        <tr><td>11</td><td>Compare suppliers for [part] &#8212; cost and OTD</td><td>DT_LANDED_COST JOIN DT_DELIVERY_PERF on supplier, filtered by part</td><td>Multi-table join &#8212; Analyst might join incorrectly</td></tr>
+        <tr><td>12</td><td>Which at-risk orders have late inbound shipments?</td><td>DT_ORDER_FULFILLMENT JOIN SHIPMENTS WHERE risk HIGH/CRITICAL AND late</td><td>DT + base table join with dual filters</td></tr>
+        <tr><td>13</td><td>Which parts need reordering and have the cheapest supplier?</td><td>DT_INVENTORY_POSITION JOIN DT_LANDED_COST WHERE on_hand &lt; reorder_point</td><td>Cross-metric join &#8212; inventory + cost</td></tr>
+        <tr><td>14</td><td>Show suppliers with low OTD and high landed cost</td><td>DT_DELIVERY_PERF JOIN DT_LANDED_COST WHERE otd &lt; 80, ORDER BY cost DESC</td><td>Dual-metric filtering across two DTs</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>How Cortex Analyst handles questions</h3>
+  <div class="summary-box">
+    <strong>Priority 1 &#8212; Verified query match:</strong> Uses the pre-validated SQL exactly. Guaranteed correct.<br>
+    <strong>Priority 2 &#8212; Semantic view definitions:</strong> No verified match, but dimensions + measures + relationships give Analyst enough context to generate SQL dynamically. Very likely correct.<br>
+    <strong>Priority 3 &#8212; Outside scope:</strong> Question is completely outside the semantic view. Analyst says it cannot answer.
+  </div>
+  <p>Verified queries exist for high-value questions where getting the SQL wrong would silently produce bad numbers. Simple filter/sort/count questions (&#8220;which supplier has the best OTD?&#8221;, &#8220;how many orders have zero fulfillment?&#8221;) are handled correctly by the semantic view&#8217;s dimensions and measures alone.</p>
+
+  <h3>Decision: RBAC in semantic view</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge partial">PARTIAL</span> &nbsp; Role-based column visibility deferred</h4>
+    <p>Original plan included RBAC in the semantic view (procurement sees supplier costs, logistics doesn&#8217;t). Deferred until the full project is built and working.</p>
+    <p class="reason">Why deferred: Get the semantic view working end-to-end first. RBAC adds complexity to testing and validation. Will be added as a later enhancement once cross-persona consistency is proven without it.</p>
+  </div>
+
+  <h3>Cross-persona consistency demo</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Question</th><th>Procurement</th><th>Logistics</th><th>Finance</th></tr></thead>
+      <tbody>
+        <tr><td>&#8220;What is OTD for Supplier X?&#8221;</td><td>92%</td><td>92%</td><td>92%</td></tr>
+        <tr><td>&#8220;What is fill rate at Plant Chicago?&#8221;</td><td>87%</td><td>87%</td><td>87%</td></tr>
+        <tr><td>&#8220;What is landed cost for Part P100?&#8221;</td><td>$14.70</td><td>$14.70</td><td>$14.70</td></tr>
+        <tr><td>&#8220;What is DOI for Part P100 at Chicago?&#8221;</td><td>2.1 days</td><td>2.1 days</td><td>2.1 days</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Same metric, same formula, same result &#8212; regardless of persona. This is what the semantic view guarantees.</p>
+
+  <!-- ============================================================ -->
+  <h2 id="cortex-agents">13. Cortex Agents</h2>
+  <p>One primary agent handles data questions and single actions directly. Three domain-specific sub-agents own all analytical skills &#8212; the primary agent delegates skill-based analysis to them. This matches the workflow requirement: separate skills per domain (procurement, planning, logistics) with shared context (semantic view).</p>
+
+  <h3>Decision: Agent architecture</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Single agent (no sub-agents)</h4>
+    <p>One agent with all tools, skills, and the semantic view. No routing, no handoffs.</p>
+    <p class="reason">Why rejected: Doesn&#8217;t demonstrate multi-agent orchestration (evaluation criterion). No domain separation of skills. One agent with many tools can lose focus on complex multi-step workflows.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Orchestrator + 4 persona-based sub-agents</h4>
+    <p>Original plan: orchestrator routes to Procurement, Logistics, Planning, and Finance agents.</p>
+    <p class="reason">Why rejected: Persona split doesn&#8217;t match how the system works. All agents hit the same semantic view. Cross-domain questions require handoffs. Routing logic can fail. Finance agent had ~80% overlap with Procurement.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Primary agent + 2 workflow sub-agents (all skills on primary)</h4>
+    <p>Previous iteration: primary agent held all 5 skills and delegated to PROCUREMENT_SPECIALIST and RISK_MONITOR only for multi-step workflows.</p>
+    <p class="reason">Why rejected: Skills duplicated across primary and sub-agents. No clear domain separation &#8212; the primary agent could run any skill directly, bypassing sub-agents. Doesn&#8217;t match the workflow requirement of &#8220;separate skills per domain.&#8221;</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Primary agent (no skills) + 3 domain sub-agents (skills separated by domain)</h4>
+    <p>Primary agent handles data questions via Cortex Analyst and single write actions via custom tools. All analytical skills live exclusively on domain sub-agents: PROCUREMENT_AGENT, PLANNING_AGENT, LOGISTICS_AGENT. This enforces clean domain separation with shared context (semantic view).</p>
+    <p class="reason">Why selected: Matches workflow step 5 exactly &#8212; separate skills per domain with shared context. No skill duplication on the primary agent. Each sub-agent owns its domain. Cross-domain questions still handled by the primary agent via Cortex Analyst (no skills needed for data lookups). 4 agents total.</p>
+  </div>
+
+  <h3>Architecture</h3>
+  <div class="flow-diagram">
+  SUPPLY_CHAIN_AGENT (primary &#8212; NO skills)
+    |
+    +-- Tool: Cortex Analyst (SUPPLY_CHAIN_ONTOLOGY)
+    +-- Tool: Code Execution
+    +-- Tool: Data to Chart
+    +-- Tool: 4 custom tools (GENERATE_SCORECARD, CREATE_PURCHASE_ORDER,
+    |         TRIGGER_EXPEDITE, UPDATE_SUPPLIER_RATING)
+    +-- MCP: Jira, Slack, Google Sheets
+    |
+    +-- Agent Toolset: PROCUREMENT_AGENT [Procurement domain]
+    |     Skills: supplier_scorecard, cost_analyzer, reorder_advisor
+    |     Tools: GENERATE_SCORECARD, CREATE_PURCHASE_ORDER,
+    |            UPDATE_SUPPLIER_RATING
+    |
+    +-- Agent Toolset: PLANNING_AGENT [Demand/Planning domain]
+    |     Skills: demand_planner, reorder_advisor
+    |     Tools: Cortex Analyst
+    |
+    +-- Agent Toolset: LOGISTICS_AGENT [Logistics domain]
+          Skills: shipment_tracker
+          Tools: TRIGGER_EXPEDITE</div>
+
+  <h3>Primary Agent: SUPPLY_CHAIN_AGENT</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Name</td><td>supply_chain_agent</td></tr>
+        <tr><td>Purpose</td><td>Answer data questions via semantic view, execute single write actions, delegate all skill-based analysis to domain sub-agents</td></tr>
+        <tr><td>Tools</td><td>Cortex Analyst, Code Execution, Data to Chart, GENERATE_SCORECARD, CREATE_PURCHASE_ORDER, TRIGGER_EXPEDITE, UPDATE_SUPPLIER_RATING</td></tr>
+        <tr><td>MCP Connectors</td><td>Jira (tickets), Slack (alerts), Google Sheets (exports)</td></tr>
+        <tr><td>Skills</td><td>None &#8212; all skills live on domain sub-agents</td></tr>
+        <tr><td>Agent Toolsets</td><td>PROCUREMENT_AGENT, PLANNING_AGENT, LOGISTICS_AGENT</td></tr>
+        <tr><td>Budget</td><td>seconds: 60, tokens: 32000</td></tr>
+        <tr><td>tool_not_accessible</td><td>accept (continue with available tools if user lacks access)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>What the primary agent handles directly (no sub-agent needed)</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Question Type</th><th>Example</th><th>How It Answers</th></tr></thead>
+      <tbody>
+        <tr><td>Metric lookup</td><td>&#8220;What is OTD for Supplier X?&#8221;</td><td>Cortex Analyst &#8594; semantic view</td></tr>
+        <tr><td>Detail query</td><td>&#8220;Show last 10 shipments from Supplier X&#8221;</td><td>Cortex Analyst &#8594; base tables</td></tr>
+        <tr><td>Cross-domain query</td><td>&#8220;Why is landed cost rising for late shipments?&#8221;</td><td>Cortex Analyst &#8594; cross-metric verified query</td></tr>
+        <tr><td>Single expedite</td><td>&#8220;Expedite Shipment #SH-4821&#8221;</td><td>TRIGGER_EXPEDITE (with confirmation)</td></tr>
+        <tr><td>Single reorder</td><td>&#8220;Create a PO for Part P100&#8221;</td><td>CREATE_PURCHASE_ORDER (with confirmation)</td></tr>
+        <tr><td>Visualization</td><td>&#8220;Chart OTD trend over last 6 months&#8221;</td><td>Data to Chart</td></tr>
+        <tr><td>Export</td><td>&#8220;Export supplier scorecard to Google Sheets&#8221;</td><td>Google Sheets MCP</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>What the primary agent delegates to sub-agents</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Question Type</th><th>Example</th><th>Delegated To</th></tr></thead>
+      <tbody>
+        <tr><td>Supplier analysis</td><td>&#8220;Evaluate Supplier X&#8217;s performance&#8221;</td><td>PROCUREMENT_AGENT (supplier_scorecard)</td></tr>
+        <tr><td>Cost analysis</td><td>&#8220;Compare landed costs across suppliers for Part P100&#8221;</td><td>PROCUREMENT_AGENT (cost_analyzer)</td></tr>
+        <tr><td>Bulk reorder</td><td>&#8220;Analyze all low-stock parts and create reorders&#8221;</td><td>PROCUREMENT_AGENT (reorder_advisor)</td></tr>
+        <tr><td>Re-rate suppliers</td><td>&#8220;Evaluate and re-rate underperforming suppliers&#8221;</td><td>PROCUREMENT_AGENT (supplier_scorecard)</td></tr>
+        <tr><td>Demand forecast</td><td>&#8220;What is demand forecast for Part P100?&#8221;</td><td>PLANNING_AGENT (demand_planner)</td></tr>
+        <tr><td>Inventory planning</td><td>&#8220;Which parts need reordering and when?&#8221;</td><td>PLANNING_AGENT (reorder_advisor)</td></tr>
+        <tr><td>Shipment tracking</td><td>&#8220;Track all in-transit shipments and flag delays&#8221;</td><td>LOGISTICS_AGENT (shipment_tracker)</td></tr>
+        <tr><td>Risk assessment</td><td>&#8220;Show all at-risk orders and recommend actions&#8221;</td><td>LOGISTICS_AGENT (shipment_tracker) + PROCUREMENT_AGENT (reorder_advisor)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Sub-Agent 1: PROCUREMENT_AGENT</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Domain</td><td>Procurement</td></tr>
+        <tr><td>Purpose</td><td>Supplier evaluation, cost analysis, reorder recommendations, purchase order creation, supplier rating updates</td></tr>
+        <tr><td>Skills</td><td>supplier_scorecard, cost_analyzer, reorder_advisor</td></tr>
+        <tr><td>Tools</td><td>Cortex Analyst, GENERATE_SCORECARD, CREATE_PURCHASE_ORDER, UPDATE_SUPPLIER_RATING</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Workflow: Bulk reorder process</h4>
+  <div class="flow-diagram">
+  User: "Analyze all low-stock parts and create reorders"
+    |
+    Primary delegates to PROCUREMENT_AGENT
+    |
+    +-- Step 1: IDENTIFY
+    |     Query DT_INVENTORY_POSITION for parts below reorder point
+    |
+    +-- Step 2: FORECAST (delegates to PLANNING_AGENT)
+    |     For each part: demand_planner returns projected 30d demand
+    |
+    +-- Step 3: SCORE SUPPLIERS
+    |     Call GENERATE_SCORECARD + cost_analyzer for landed cost comparison
+    |
+    +-- Step 4: CALCULATE
+    |     reorder_qty = (projected_demand + safety_stock) - on_hand
+    |     Pick best supplier (score + cost + lead time)
+    |
+    +-- Step 5: PRESENT RECOMMENDATIONS
+    |     User can EDIT quantity and supplier for each line
+    |
+    +-- Step 6: CONFIRM AND EXECUTE
+          CREATE_PURCHASE_ORDER for each confirmed line
+          Report: "Created 7 POs totaling $42,300"</div>
+
+  <h3>Sub-Agent 2: PLANNING_AGENT</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Domain</td><td>Demand / Planning</td></tr>
+        <tr><td>Purpose</td><td>Demand forecasting using ML FORECAST, inventory planning, reorder timing recommendations</td></tr>
+        <tr><td>Skills</td><td>demand_planner, reorder_advisor</td></tr>
+        <tr><td>Tools</td><td>Cortex Analyst</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Workflow: Demand analysis and reorder planning</h4>
+  <div class="flow-diagram">
+  User: "What parts need reordering and when?"
+    |
+    Primary delegates to PLANNING_AGENT
+    |
+    +-- Step 1: IDENTIFY low-DOI parts from DT_INVENTORY_POSITION
+    |
+    +-- Step 2: FORECAST demand for each (ML FORECAST, no retraining)
+    |     Returns: projected_30d_demand, confidence range, trend
+    |
+    +-- Step 3: CALCULATE reorder timing
+    |     days_until_stockout = on_hand / avg_daily_demand
+    |     order_by_date = today + days_until_stockout - supplier_lead_time
+    |
+    +-- Step 4: PRESENT timeline
+          Part, current DOI, forecast, recommended order date
+          If user wants to proceed with POs: hand off to PROCUREMENT_AGENT</div>
+
+  <h3>Sub-Agent 3: LOGISTICS_AGENT</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Domain</td><td>Logistics</td></tr>
+        <tr><td>Purpose</td><td>Shipment tracking, delay detection, revised ETA estimation, expedite recommendations</td></tr>
+        <tr><td>Skills</td><td>shipment_tracker</td></tr>
+        <tr><td>Tools</td><td>Cortex Analyst, TRIGGER_EXPEDITE</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>Workflow: Risk assessment and remediation</h4>
+  <div class="flow-diagram">
+  User: "Show all at-risk orders and recommend actions"
+    |
+    Primary delegates to LOGISTICS_AGENT
+    |
+    +-- Step 1: IDENTIFY at-risk orders from DT_ORDER_FULFILLMENT
+    |
+    +-- Step 2: TRACE ROOT CAUSE (for each order)
+    |     shipment_tracker checks inbound shipments
+    |     Estimates revised ETA from carrier history
+    |     Checks DT_INVENTORY_POSITION for stock coverage
+    |     Root cause: late shipment? low stock? both?
+    |
+    +-- Step 3: RECOMMEND ACTION
+    |     Late shipment &#8594; recommend TRIGGER_EXPEDITE
+    |     Low stock &#8594; hand off to PROCUREMENT_AGENT for reorder
+    |     Both &#8594; expedite AND reorder
+    |
+    +-- Step 4: PRESENT RECOMMENDATIONS
+    |     User reviews and selects actions
+    |
+    +-- Step 5: EXECUTE
+          Expedites: TRIGGER_EXPEDITE (Jira + Slack + record update)
+          Reorders: delegates to PROCUREMENT_AGENT
+          Report: "Expedited 3 shipments, initiated 2 reorders"</div>
+
+  <h3>Inter-agent handoffs</h3>
+  <div class="summary-box">
+    <strong>Two handoff patterns exist in the system:</strong><br>
+    1. <strong>LOGISTICS_AGENT &#8594; PROCUREMENT_AGENT:</strong> When risk assessment finds low stock as root cause, Logistics hands off to Procurement for the reorder workflow.<br>
+    2. <strong>PROCUREMENT_AGENT &#8594; PLANNING_AGENT:</strong> When the bulk reorder process needs demand forecasts, Procurement delegates to Planning for ML-based projections.<br>
+    Both are one-directional and only triggered when the workflow requires cross-domain action.
+  </div>
+
+  <h3>Shared context: Semantic view</h3>
+  <div class="summary-box">
+    <strong>All 4 agents share the same SUPPLY_CHAIN_ONTOLOGY semantic view.</strong> This is the &#8220;shared context&#8221; from the workflow requirement. When PROCUREMENT_AGENT queries inventory data, it gets the same numbers as LOGISTICS_AGENT querying the same table. The semantic view ensures consistency across all domain agents.
+  </div>
+
+  <h3>Agent object count</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Agent</th><th>Type</th><th>Domain</th><th>Tools</th><th>Skills</th></tr></thead>
+      <tbody>
+        <tr><td>SUPPLY_CHAIN_AGENT</td><td>Primary</td><td>All (routing + data + actions)</td><td>Cortex Analyst, Code Execution, Data to Chart, 4 custom tools, 3 MCP</td><td>None</td></tr>
+        <tr><td>PROCUREMENT_AGENT</td><td>Sub-agent</td><td>Procurement</td><td>Cortex Analyst, GENERATE_SCORECARD, CREATE_PURCHASE_ORDER, UPDATE_SUPPLIER_RATING</td><td>supplier_scorecard, cost_analyzer, reorder_advisor</td></tr>
+        <tr><td>PLANNING_AGENT</td><td>Sub-agent</td><td>Demand / Planning</td><td>Cortex Analyst</td><td>demand_planner, reorder_advisor</td></tr>
+        <tr><td>LOGISTICS_AGENT</td><td>Sub-agent</td><td>Logistics</td><td>Cortex Analyst, TRIGGER_EXPEDITE</td><td>shipment_tracker</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="rbac">14. Role-Based Access Control (RBAC)</h2>
+  <p>Column-level security using Snowflake masking policies. 3 domain roles restrict what each team sees. Primary agent has full read access to answer cross-domain questions. Sub-agents run under their domain role with masking enforced by Snowflake.</p>
+
+  <h3>Decision: Primary agent access level</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Restricted primary agent (SC_AGENT_ROLE with masking)</h4>
+    <p>Primary agent sees only columns common to all roles. Cost, supplier ratings, customer details, safety stock, reorder points all masked.</p>
+    <p class="reason">Why rejected: Primary agent becomes near-useless &#8212; most of the 14 verified queries involve at least one masked column. Cross-metric queries fail silently. The agent spends most of its time routing instead of answering. The semantic view loses its value on the primary agent.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Full read access for primary agent, RBAC enforced on domain sub-agents</h4>
+    <p>SC_AGENT_ROLE bypasses all masking policies (read-only, no DDL). The 3 domain roles (PROCUREMENT_ROLE, PLANNING_ROLE, LOGISTICS_ROLE) are restricted by masking policies. Sub-agents run under domain roles.</p>
+    <p class="reason">Why selected: Primary agent is infrastructure, not a user persona. It needs the full picture to answer cross-domain questions and route intelligently. The semantic view and all 14 verified queries work completely. RBAC is enforced where it matters &#8212; at the domain sub-agent level where skill-based analysis happens.</p>
+  </div>
+
+  <h3>Decision: How to enforce column restrictions</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Secure views per role (3 views per table)</h4>
+    <p>Create role-specific views: SUPPLIERS_PROCUREMENT_V, SUPPLIERS_PLANNING_V, SUPPLIERS_LOGISTICS_V, etc.</p>
+    <p class="reason">Why rejected: Creates many extra objects (potentially 3 views per table = ~39 views). Semantic view would need to reference different views per role. Complex maintenance. Doesn&#8217;t scale.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Snowflake column masking policies</h4>
+    <p>5 masking policies applied directly on base tables and DTs. No extra views. Semantic view references the same physical tables for all roles &#8212; Snowflake handles visibility at the engine level. Zero changes to semantic view YAML for RBAC.</p>
+    <p class="reason">Why selected: Native Snowflake feature. No extra objects. Works seamlessly with semantic view and agents. Security is a separate policy layer, not baked into the data model.</p>
+  </div>
+
+  <h3>Role hierarchy</h3>
+  <div class="flow-diagram">
+  ACCOUNTADMIN
+    |
+    +-- SUPPLY_CHAIN_ADMIN (DDL, maintenance, bypasses all masks)
+          |
+          +-- SC_AGENT_ROLE (primary agent &#8212; full read, bypasses masks)
+          |     Used by: SUPPLY_CHAIN_AGENT
+          |     Can: read all tables/columns, route to sub-agents, single write actions
+          |     Cannot: DDL, admin operations
+          |
+          +-- PROCUREMENT_ROLE (domain-restricted)
+          |     Used by: PROCUREMENT_AGENT
+          |     Full: cost data, supplier ratings, landed cost, pricing
+          |     Masked: customer details, safety stock
+          |
+          +-- PLANNING_ROLE (domain-restricted)
+          |     Used by: PLANNING_AGENT
+          |     Full: customers, inventory details, safety stock, reorder points
+          |     Masked: cost data, supplier ratings, carrier details
+          |
+          +-- LOGISTICS_ROLE (domain-restricted)
+                Used by: LOGISTICS_AGENT
+                Full: shipment details, carrier performance, delivery tracking
+                Masked: cost data, customer data, safety stock, reorder points</div>
+
+  <h3>Access matrix &#8212; Base Tables</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Column(s)</th><th>Table</th><th>Procurement</th><th>Planning</th><th>Logistics</th><th>Primary Agent</th></tr></thead>
+      <tbody>
+        <tr><td>supplier_id, name, country, lead_time</td><td>SUPPLIERS</td><td>Full</td><td>Read</td><td>Read</td><td>Full</td></tr>
+        <tr><td>quality_rating</td><td>SUPPLIERS</td><td>Full</td><td>NULL</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>All columns</td><td>PARTS</td><td>Full</td><td>Full</td><td>Full</td><td>Full</td></tr>
+        <tr><td>All columns</td><td>PLANTS</td><td>Full</td><td>Full</td><td>Full</td><td>Full</td></tr>
+        <tr><td>All columns</td><td>CUSTOMERS</td><td>NULL</td><td>Full</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>dates, carrier, status, priority</td><td>SHIPMENTS</td><td>Full</td><td>Read</td><td>Full</td><td>Full</td></tr>
+        <tr><td>freight_cost</td><td>SHIPMENTS</td><td>Full</td><td>NULL</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>unit_cost</td><td>SHIPMENT_LINES</td><td>Full</td><td>NULL</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>dates, status, priority</td><td>ORDERS</td><td>Read</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>unit_price</td><td>ORDER_LINES</td><td>Full</td><td>NULL</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>quantity, fulfilled_quantity</td><td>ORDER_LINES</td><td>Full</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>on_hand_qty, doi</td><td>INVENTORY</td><td>Read</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>safety_stock_qty</td><td>INVENTORY</td><td>NULL</td><td>Full</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>reorder_point</td><td>INVENTORY</td><td>Full</td><td>Full</td><td>NULL</td><td>Full</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Access matrix &#8212; Dynamic Tables</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Column(s)</th><th>Dynamic Table</th><th>Procurement</th><th>Planning</th><th>Logistics</th><th>Primary Agent</th></tr></thead>
+      <tbody>
+        <tr><td>supplier_name, plant_name</td><td>DT_DELIVERY_PERF</td><td>Full</td><td>Read</td><td>Full</td><td>Full</td></tr>
+        <tr><td>carrier</td><td>DT_DELIVERY_PERF</td><td>Full</td><td>NULL</td><td>Full</td><td>Full</td></tr>
+        <tr><td>otd_percentage, avg_lead_time, late_shipment_count</td><td>DT_DELIVERY_PERF</td><td>Full</td><td>Read</td><td>Full</td><td>Full</td></tr>
+        <tr><td>order_id, plant_name, dates</td><td>DT_ORDER_FULFILLMENT</td><td>Read</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>customer_id, customer_name</td><td>DT_ORDER_FULFILLMENT</td><td>NULL</td><td>Full</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>fulfillment_ratio, risk_score, risk_level</td><td>DT_ORDER_FULFILLMENT</td><td>Read</td><td>Full</td><td>Full</td><td>Full</td></tr>
+        <tr><td>shipment_delay_days</td><td>DT_ORDER_FULFILLMENT</td><td>Read</td><td>Read</td><td>Full</td><td>Full</td></tr>
+        <tr><td>stock_coverage_days</td><td>DT_ORDER_FULFILLMENT</td><td>Read</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>part_name, plant_name, on_hand_qty, doi</td><td>DT_INVENTORY_POSITION</td><td>Read</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>safety_stock_qty</td><td>DT_INVENTORY_POSITION</td><td>NULL</td><td>Full</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>reorder_point</td><td>DT_INVENTORY_POSITION</td><td>Full</td><td>Full</td><td>NULL</td><td>Full</td></tr>
+        <tr><td>stockout_risk</td><td>DT_INVENTORY_POSITION</td><td>Read</td><td>Full</td><td>Read</td><td>Full</td></tr>
+        <tr><td>All columns</td><td>DT_LANDED_COST</td><td>Full</td><td>NULL</td><td>NULL</td><td>Full</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Masking policies (5)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Policy</th><th>Columns Masked</th><th>Visible To</th><th>Returns NULL For</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>COST_DATA_MASK</td>
+          <td>freight_cost (SHIPMENTS), unit_cost (SHIPMENT_LINES), unit_price (ORDER_LINES), all DT_LANDED_COST columns</td>
+          <td>PROCUREMENT_ROLE, SC_AGENT_ROLE</td>
+          <td>PLANNING_ROLE, LOGISTICS_ROLE</td>
+        </tr>
+        <tr>
+          <td>SUPPLIER_DETAIL_MASK</td>
+          <td>quality_rating (SUPPLIERS), carrier (SHIPMENTS, DT_DELIVERY_PERF)</td>
+          <td>PROCUREMENT_ROLE, LOGISTICS_ROLE, SC_AGENT_ROLE</td>
+          <td>PLANNING_ROLE</td>
+        </tr>
+        <tr>
+          <td>CUSTOMER_DATA_MASK</td>
+          <td>customer_id, customer_name (CUSTOMERS, DT_ORDER_FULFILLMENT)</td>
+          <td>PLANNING_ROLE, SC_AGENT_ROLE</td>
+          <td>PROCUREMENT_ROLE, LOGISTICS_ROLE</td>
+        </tr>
+        <tr>
+          <td>SAFETY_STOCK_MASK</td>
+          <td>safety_stock_qty (INVENTORY, DT_INVENTORY_POSITION)</td>
+          <td>PLANNING_ROLE, SC_AGENT_ROLE</td>
+          <td>PROCUREMENT_ROLE, LOGISTICS_ROLE</td>
+        </tr>
+        <tr>
+          <td>REORDER_POINT_MASK</td>
+          <td>reorder_point (INVENTORY, DT_INVENTORY_POSITION)</td>
+          <td>PROCUREMENT_ROLE, PLANNING_ROLE, SC_AGENT_ROLE</td>
+          <td>LOGISTICS_ROLE</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>SUPPLY_CHAIN_ADMIN bypasses all masks (admin/maintenance only &#8212; no agent uses this role).</p>
+
+  <h3>Agent-to-role mapping</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Agent</th><th>Snowflake Role</th><th>Can See</th><th>Cannot See</th></tr></thead>
+      <tbody>
+        <tr><td>SUPPLY_CHAIN_AGENT</td><td>SC_AGENT_ROLE</td><td>Everything (full read, bypasses masks)</td><td>N/A &#8212; full visibility</td></tr>
+        <tr><td>PROCUREMENT_AGENT</td><td>PROCUREMENT_ROLE</td><td>All cost data, supplier ratings, landed cost, pricing, reorder points</td><td>Customer details, safety stock</td></tr>
+        <tr><td>PLANNING_AGENT</td><td>PLANNING_ROLE</td><td>Customer data, inventory details, safety stock, reorder points, demand data</td><td>Cost data, supplier ratings, carrier details</td></tr>
+        <tr><td>LOGISTICS_AGENT</td><td>LOGISTICS_ROLE</td><td>Shipment details, carrier performance, delivery tracking, risk scores</td><td>Cost data, customer data, safety stock, reorder points</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>How the 4 canonical metrics are affected</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>Procurement</th><th>Planning</th><th>Logistics</th></tr></thead>
+      <tbody>
+        <tr><td>OTD %</td><td>Full (by supplier, carrier, plant)</td><td>Read (by plant only, no carrier)</td><td>Full (by carrier, plant, supplier)</td></tr>
+        <tr><td>Fill Rate %</td><td>Read (overall, no customer breakdown)</td><td>Full (by customer, plant, part)</td><td>Full (by plant, order)</td></tr>
+        <tr><td>Days of Inventory</td><td>Read (no safety stock context)</td><td>Full (with safety stock, reorder point)</td><td>Read (no safety stock, no reorder point)</td></tr>
+        <tr><td>Landed Cost per Unit</td><td>Full (all components, by supplier)</td><td>No access</td><td>No access</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Graceful acknowledgment behavior</h3>
+  <div class="summary-box">
+    <strong>When a sub-agent hits masked columns:</strong> The agent acknowledges clearly instead of returning NULLs or guessing. Example: a LOGISTICS_AGENT asked about landed cost responds: &#8220;Cost data is restricted for the logistics role. The Procurement team has access to landed cost breakdowns.&#8221; This behavior is enforced via the agent system prompt and the guardrails framework.
+  </div>
+
+  <h3>RBAC objects summary</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Object</th><th>Count</th></tr></thead>
+      <tbody>
+        <tr><td>Snowflake roles (SUPPLY_CHAIN_ADMIN, SC_AGENT_ROLE, PROCUREMENT_ROLE, PLANNING_ROLE, LOGISTICS_ROLE)</td><td>5</td></tr>
+        <tr><td>Masking policies</td><td>5</td></tr>
+        <tr><td><strong>Total RBAC objects</strong></td><td><strong>10</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="streamlit">15. Streamlit App (Supply Chain Analyst)</h2>
+  <p>One app, three persona views. Deployed to Streamlit in Snowflake (SiS). Persona auto-detected from Snowflake role with manual override for demos. NL query interface embedded on every page, backed by the Cortex Agent.</p>
+
+  <h3>Decision: Deployment</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Local Streamlit deployment</h4>
+    <p>Run the app locally or on a separate server.</p>
+    <p class="reason">Why rejected: Needs separate authentication. RBAC must be managed in app code instead of leveraging Snowflake roles. Not shareable via Snowflake URL. Doesn&#8217;t demonstrate &#8220;working across surfaces.&#8221;</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Streamlit in Snowflake (SiS)</h4>
+    <p>Deployed to Snowflake. RBAC comes free &#8212; the app runs under the user&#8217;s Snowflake role, masking policies apply automatically. Shareable URL across the org.</p>
+    <p class="reason">Why selected: No separate auth. Masking policies enforce column visibility without app-level code. Matches the &#8220;working across surfaces&#8221; evaluation criterion (Snowsight Cloud). One-click access for any Snowflake user.</p>
+  </div>
+
+  <h3>Decision: NL query backend</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Cortex Analyst only (no agent)</h4>
+    <p>NL interface calls Cortex Analyst directly for fast data queries.</p>
+    <p class="reason">Why rejected: No skill access, no actions (can&#8217;t expedite or create POs from chat), no multi-step workflows. Limited to read-only data queries.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Dual mode: Cortex Analyst (fast) + full agent (when needed)</h4>
+    <p>Default to Cortex Analyst for data queries (fast responses). Escalate to SUPPLY_CHAIN_AGENT when the query involves skills or actions. The app detects intent from the query.</p>
+    <p class="reason">Why selected: Fast for most questions. Full agent capability when needed (expedite, reorder, forecast). Best of both worlds without forcing every question through the full agent pipeline.</p>
+  </div>
+
+  <h3>Decision: Chart library</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Altair</h4>
+    <p>Declarative, cleaner syntax, good for simple charts.</p>
+    <p class="reason">Why rejected: Less capable for interactive features needed here &#8212; hover tooltips on multi-series trends, zoom on time-series, click-through on heatmaps, cost breakdown drilldowns.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Plotly</h4>
+    <p>Interactive charts with hover tooltips, zoom, click events. Handles multi-series comparisons and cost breakdowns well.</p>
+    <p class="reason">Why selected: Better fit for supply chain dashboards &#8212; OTD trend hover shows exact values, cost breakdown bars are clickable, heatmaps support zoom. Works in SiS via st.plotly_chart.</p>
+  </div>
+
+  <h3>Decision: Conversation persistence</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Backend persistence (write to table)</h4>
+    <p>Store conversation history in a Snowflake table for cross-session recall.</p>
+    <p class="reason">Why rejected: Adds write operations, another table to manage, and privacy concerns (who can see whose conversations). Not needed for the use case.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Frontend-only persistence (st.session_state)</h4>
+    <p>Conversation history stored in st.session_state. Survives page navigation within the same session. Clears on browser refresh or session end.</p>
+    <p class="reason">Why selected: No backend writes. No extra objects. Sufficient for within-session continuity. User can reference earlier answers while navigating between pages.</p>
+  </div>
+
+  <h3>App layout</h3>
+  <div class="flow-diagram">
+  +-----------------------------------------------------------+
+  | HEADER BAR                                                |
+  | [Logo] Supply Chain Analyst   [Persona: Procurement v]    |
+  +-----------+-----------------------------------------------+
+  |           |                                               |
+  | SIDEBAR   |  MAIN AREA                                    |
+  |           |                                               |
+  | +-------+ |  +-------------------------------------------+|
+  | |Overview| |  | KPI TILES (persona-specific)              ||
+  | |Page 2  | |  | [OTD: 92%] [Fill: 87%] [DOI: 5.2]        ||
+  | |Page 3  | |  +-------------------------------------------+|
+  | |Page 4  | |  +-------------------------------------------+|
+  | |Alerts  | |  | CHARTS (Plotly, interactive)               ||
+  | |        | |  | Trend lines, bar charts, heatmaps         ||
+  | +-------+ |  +-------------------------------------------+|
+  |           |  +-------------------------------------------+|
+  | Pages     |  | DETAIL TABLE (sortable, filterable)        ||
+  | adapt per |  +-------------------------------------------+|
+  | persona   |                                               |
+  +-----------+-----------------------------------------------+
+  | NL QUERY INTERFACE (persistent across pages)              |
+  | +---------------------------------------------------+     |
+  | | Ask anything about your supply chain...           | [>] |
+  | +---------------------------------------------------+     |
+  | Agent response: text + charts + tables + actions          |
+  | Conversation history (st.session_state)                   |
+  +-----------------------------------------------------------+</div>
+
+  <h3>Persona selection</h3>
+  <div class="summary-box">
+    <strong>Auto-detect + manual override.</strong> On load, the app reads CURRENT_ROLE() and maps to a persona (PROCUREMENT_ROLE &#8594; Procurement, PLANNING_ROLE &#8594; Planning, LOGISTICS_ROLE &#8594; Logistics, others &#8594; Admin). A dropdown in the header allows manual override for demo purposes. Switching persona refreshes all KPIs, charts, sidebar pages, and alert filters.
+  </div>
+
+  <h3>Persona dashboards</h3>
+
+  <h4>Procurement</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Section</th><th>Content</th><th>Data Source</th></tr></thead>
+      <tbody>
+        <tr><td>KPI Tiles</td><td>OTD%, Landed Cost avg, Supplier count, Active POs</td><td>DT_DELIVERY_PERF, DT_LANDED_COST, SUPPLIERS, ORDERS</td></tr>
+        <tr><td>Chart 1</td><td>OTD% trend by supplier (line chart, 6 months)</td><td>DT_DELIVERY_PERF</td></tr>
+        <tr><td>Chart 2</td><td>Landed cost breakdown &#8212; material vs freight vs duty (stacked bar)</td><td>DT_LANDED_COST</td></tr>
+        <tr><td>Chart 3</td><td>Supplier scorecard heatmap (OTD vs cost vs quality)</td><td>DT_DELIVERY_PERF + DT_LANDED_COST + GENERATE_SCORECARD</td></tr>
+        <tr><td>Detail table</td><td>Top suppliers ranked by composite score</td><td>SUPPLIERS + GENERATE_SCORECARD</td></tr>
+        <tr><td>Alerts</td><td>Open expedite alerts</td><td>SUPPLY_CHAIN_ALERTS</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Sidebar pages:</strong> Overview, Suppliers, Costs, Alerts</p>
+
+  <h4>Planning</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Section</th><th>Content</th><th>Data Source</th></tr></thead>
+      <tbody>
+        <tr><td>KPI Tiles</td><td>Fill Rate%, Avg DOI, Reorder candidates, At-risk orders</td><td>DT_ORDER_FULFILLMENT, DT_INVENTORY_POSITION</td></tr>
+        <tr><td>Chart 1</td><td>Fill rate trend by plant (line chart, 6 months)</td><td>DT_ORDER_FULFILLMENT</td></tr>
+        <tr><td>Chart 2</td><td>Inventory position heatmap &#8212; DOI by part x plant (color = risk)</td><td>DT_INVENTORY_POSITION</td></tr>
+        <tr><td>Chart 3</td><td>Demand forecast vs actuals (line with confidence band)</td><td>ML FORECAST model output</td></tr>
+        <tr><td>Detail table</td><td>Parts below reorder point with DOI and projected demand</td><td>DT_INVENTORY_POSITION + demand_planner</td></tr>
+        <tr><td>Alerts</td><td>Low stock alerts</td><td>SUPPLY_CHAIN_ALERTS</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Sidebar pages:</strong> Overview, Orders, Inventory, Demand, Alerts</p>
+
+  <h4>Logistics</h4>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Section</th><th>Content</th><th>Data Source</th></tr></thead>
+      <tbody>
+        <tr><td>KPI Tiles</td><td>OTD%, In-transit count, Late shipments, Expedited count</td><td>DT_DELIVERY_PERF, SHIPMENTS</td></tr>
+        <tr><td>Chart 1</td><td>OTD% by carrier (bar chart)</td><td>DT_DELIVERY_PERF</td></tr>
+        <tr><td>Chart 2</td><td>Shipment status &#8212; on track / at risk / delayed / critical (donut)</td><td>SHIPMENTS + shipment_tracker classification</td></tr>
+        <tr><td>Chart 3</td><td>Order risk distribution by plant (stacked bar)</td><td>DT_ORDER_FULFILLMENT</td></tr>
+        <tr><td>Detail table</td><td>In-transit shipments with revised ETA and risk status</td><td>SHIPMENTS</td></tr>
+        <tr><td>Alerts</td><td>Shipment delay + order risk alerts</td><td>SUPPLY_CHAIN_ALERTS</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Sidebar pages:</strong> Overview, Shipments, Orders, Risk, Alerts</p>
+
+  <h3>Common elements across all personas</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Element</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>NL Query Interface</td><td>Fixed at bottom of every page. Dual mode: Cortex Analyst for data queries, full agent for skills/actions. Conversation persists in st.session_state across page navigation.</td></tr>
+        <tr><td>Alerts badge</td><td>Sidebar shows count of open alerts. Click opens alerts page filtered to persona&#8217;s domain.</td></tr>
+        <tr><td>Refresh indicator</td><td>Shows when DTs last refreshed. Warning if stale (&gt; 1 hour).</td></tr>
+        <tr><td>Export button</td><td>Export current view to Google Sheets (via MCP) or download as CSV.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Alerts page &#8212; Open + History tabs</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tab</th><th>Content</th><th>Data Source</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Open</td>
+          <td>Active alerts: alert type, record ID, priority, reason, Jira ticket link, created timestamp. Filterable by type (EXPEDITE, LOW_STOCK, ORDER_RISK).</td>
+          <td>SUPPLY_CHAIN_ALERTS WHERE status = &#8216;OPEN&#8217;</td>
+        </tr>
+        <tr>
+          <td>History</td>
+          <td>Resolved alerts: same columns + resolved timestamp, resolution method (auto-closed on delivery/fulfillment, manually closed). Jira ticket status shown. Filterable by date range and type.</td>
+          <td>SUPPLY_CHAIN_ALERTS WHERE status = &#8216;RESOLVED&#8217;</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>NL Query Interface &#8212; detailed flow</h3>
+  <div class="flow-diagram">
+  User types: "Why did OTD drop for Supplier Acme last month?"
+    |
+    v
+  App detects: data query (no action keyword)
+    |
+    v
+  Sends to Cortex Analyst (fast path)
+    |
+    v
+  Cortex Analyst uses verified query #9 (OTD trend)
+    |
+    v
+  Response rendered in app:
+    +-- Text: "OTD for Acme dropped from 92% to 78% in Sep.
+    |         Root cause: carrier FastFreight had 5 late deliveries."
+    +-- Chart: OTD trend line (Plotly, inline)
+    +-- Suggestion: "Want me to flag this for expedite review?"
+
+  ----- vs action query -----
+
+  User types: "Expedite Shipment #SH-4821"
+    |
+    v
+  App detects: action keyword ("expedite")
+    |
+    v
+  Sends to SUPPLY_CHAIN_AGENT (full agent path)
+    |
+    v
+  Agent runs TRIGGER_EXPEDITE flow with confirmation
+    |
+    v
+  Response rendered:
+    +-- Text: "Shipment #SH-4821 is 5 days late. Impact: Order #1234."
+    +-- Confirmation: [Expedite] [Cancel]
+    +-- After confirm: "Expedited. Jira: SCO-1234. Slack alert sent."</div>
+
+  <h3>Sidebar page visibility per persona</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Page</th><th>Procurement</th><th>Planning</th><th>Logistics</th></tr></thead>
+      <tbody>
+        <tr><td>Overview</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Suppliers</td><td>Yes</td><td>&#8212;</td><td>&#8212;</td></tr>
+        <tr><td>Costs</td><td>Yes</td><td>&#8212;</td><td>&#8212;</td></tr>
+        <tr><td>Orders</td><td>&#8212;</td><td>Yes</td><td>Yes</td></tr>
+        <tr><td>Inventory</td><td>&#8212;</td><td>Yes</td><td>&#8212;</td></tr>
+        <tr><td>Demand</td><td>&#8212;</td><td>Yes</td><td>&#8212;</td></tr>
+        <tr><td>Shipments</td><td>&#8212;</td><td>&#8212;</td><td>Yes</td></tr>
+        <tr><td>Risk</td><td>&#8212;</td><td>&#8212;</td><td>Yes</td></tr>
+        <tr><td>Alerts</td><td>Yes (expedite)</td><td>Yes (low stock)</td><td>Yes (delays + risk)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Pages not relevant to a persona are hidden from their sidebar. Alerts page shows for all but filters by domain.</p>
+
+  <h3>Streamlit app objects</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Object</th><th>Count</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Streamlit app (deployed to SiS)</td><td>1</td><td>All persona logic, pages, and NL interface within one app</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="automations">16. CoCo Automations</h2>
+  <p>3 team-based daily briefs deployed as Snowflake AGENT TASKs via <code>cortex automation create</code>. Each runs unattended on a weekday schedule and produces a status report for its team. Staggered timing ensures Logistics feeds Planning feeds Procurement.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Automation</th><th>Team</th><th>Cadence</th><th>Fires At (IST)</th><th>What It Reports</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>LOGISTICS_DAILY_BRIEF</td>
+          <td>Logistics</td>
+          <td>Weekdays</td>
+          <td>7:30 AM</td>
+          <td>In-transit shipment status (ON_TRACK/AT_RISK/DELAYED/CRITICAL), carrier OTD snapshot, open expedite tracker, order impact from delayed shipments</td>
+        </tr>
+        <tr>
+          <td>PLANNING_DAILY_BRIEF</td>
+          <td>Planning</td>
+          <td>Weekdays</td>
+          <td>8:00 AM</td>
+          <td>Inventory health by risk bucket (CRITICAL/WARNING/WATCH/HEALTHY), order fulfillment status, demand vs stock gap analysis, forecast model staleness check</td>
+        </tr>
+        <tr>
+          <td>PROCUREMENT_DAILY_BRIEF</td>
+          <td>Procurement</td>
+          <td>Weekdays</td>
+          <td>8:30 AM</td>
+          <td>Supplier scorecard ranking + underperformer flags, landed cost trends (7-day vs 30-day), pending reorder candidates with best supplier, open procurement alerts</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Decision: Automation architecture</h3>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Single unified daily report for all teams</h4>
+    <p>One automation producing a combined report with all metrics.</p>
+    <p class="reason">Why rejected: Different teams care about different metrics. A combined report is noisy &#8212; procurement doesn't need shipment tracking details, logistics doesn't need cost trend analysis. Team-specific briefs are more actionable.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge selected">SELECTED</span> &nbsp; Team-based daily briefs with staggered timing</h4>
+    <p>3 separate automations, one per team: Logistics (7:30 AM), Planning (8:00 AM), Procurement (8:30 AM). Staggered so shipment status informs inventory analysis, which informs reorder decisions.</p>
+    <p class="reason">Why selected: Each team gets exactly the metrics they need. Staggered timing creates an information cascade &#8212; Logistics status is fresh when Planning reads inventory, and Planning gaps are visible when Procurement evaluates reorders. All are read-only (default RSS), results in transcript + email.</p>
+  </div>
+
+  <div class="decision-card">
+    <h4><span class="badge rejected">REJECTED</span> &nbsp; Write-enabled automations that auto-create POs or expedites</h4>
+    <p>Allow automations to directly call CREATE_PURCHASE_ORDER or TRIGGER_EXPEDITE.</p>
+    <p class="reason">Why rejected: Unattended writes are dangerous. Automations would need <code>--without-read-only</code> which drops all safety guardrails. Write actions should require human confirmation via the agent or Streamlit interface. Automations detect and report &#8212; humans decide and act.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2 id="deployment-fixes">17. Deployment Fixes and Adaptations</h2>
+  <p>Issues discovered and resolved during phase-by-phase deployment to Snowflake.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Issue</th><th>Phase</th><th>Root Cause</th><th>Fix Applied</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>CREATE_PURCHASE_ORDER missing input validation</td>
+          <td>Phase 6 (Custom Tools)</td>
+          <td>SP accepted non-existent part_id, supplier_id, or plant_id. Would create POs with $0 cost for invalid parts.</td>
+          <td>Added Guardrail 0: validates part, supplier, plant existence and quantity &gt; 0 before proceeding.</td>
+        </tr>
+        <tr>
+          <td>UPDATE_SUPPLIER_RATING colon prefix bug</td>
+          <td>Phase 6 (Custom Tools)</td>
+          <td>Line 77 used <code>p_reason</code> instead of <code>:p_reason</code> in Snowflake SQL SP. Would cause runtime &#8220;invalid identifier&#8221; error.</td>
+          <td>Fixed to <code>:p_reason</code> with proper colon prefix.</td>
+        </tr>
+        <tr>
+          <td>FULL refresh mode on all 4 DTs</td>
+          <td>Phase 4 (Dynamic Tables)</td>
+          <td>CURRENT_DATE() in DT_ORDER_FULFILLMENT and DT_INVENTORY_POSITION blocked INCREMENTAL. Complex CTEs triggered FULL auto-selection on others.</td>
+          <td>Removed CURRENT_DATE() from all DTs. Created V_ORDER_FULFILLMENT view for risk scoring at query time. Set REFRESH_MODE = INCREMENTAL explicitly.</td>
+        </tr>
+        <tr>
+          <td>Correlated subqueries unsupported in DTs</td>
+          <td>Phase 4 (Dynamic Tables)</td>
+          <td>DT_ORDER_FULFILLMENT used <code>IN (SELECT ... WHERE sl.shipment_id = sh.shipment_id)</code> &#8212; unsupported in dynamic table definitions.</td>
+          <td>Rewrote shipment_health CTE to use JOINs instead of correlated subqueries.</td>
+        </tr>
+        <tr>
+          <td>DT_LANDED_COST correlated subqueries</td>
+          <td>Phase 4 (Dynamic Tables)</td>
+          <td>Used correlated subquery <code>(SELECT SUM(sl2.quantity) FROM SHIPMENT_LINES sl2 WHERE sl2.shipment_id = sh.shipment_id)</code> repeated 4 times.</td>
+          <td>Extracted into a <code>shipment_totals</code> CTE and joined once. Cleaner and DT-compatible.</td>
+        </tr>
+        <tr>
+          <td>CHANGE_TRACKING not valid on CREATE DYNAMIC TABLE</td>
+          <td>Phase 4 (Dynamic Tables)</td>
+          <td><code>CHANGE_TRACKING = TRUE</code> is not a valid property in <code>CREATE DYNAMIC TABLE</code> syntax.</td>
+          <td>Removed from CREATE statement. With INCREMENTAL refresh, streams can be created directly on the DT without explicit CHANGE_TRACKING.</td>
+        </tr>
+        <tr>
+          <td>Stream on DT requires INCREMENTAL</td>
+          <td>Phase 5 (Streams)</td>
+          <td>STREAM_ORDER_RISK on DT_ORDER_FULFILLMENT was impossible when DT used FULL refresh (no change tracking).</td>
+          <td>After switching to INCREMENTAL, STREAM_ORDER_RISK works. TASK_ORDER_RISK_ALERT converted from schedule-based polling to stream-triggered.</td>
+        </tr>
+        <tr>
+          <td>Streams cannot be created on views</td>
+          <td>Phase 5 (Streams)</td>
+          <td>Considered placing stream on V_ORDER_FULFILLMENT instead of the DT.</td>
+          <td>Stream placed on DT_ORDER_FULFILLMENT (the incremental DT). Task reads V_ORDER_FULFILLMENT for live risk_level at execution time.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</body>
+</html>
