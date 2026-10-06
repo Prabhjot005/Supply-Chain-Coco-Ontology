@@ -1,0 +1,36 @@
+name: Build & Push to Snowflake SPCS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  SNOWFLAKE_REGISTRY: tmwtzbr-pk97201.registry.snowflakecomputing.com
+  IMAGE_REPO: tmwtzbr-pk97201.registry.snowflakecomputing.com/supply_chain_db/scm/sc_image_repo
+  IMAGE_NAME: sc_streamlit
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Snowflake Image Registry
+        run: |
+          echo "${{ secrets.SNOWFLAKE_PASSWORD }}" | docker login \
+            ${{ env.SNOWFLAKE_REGISTRY }} \
+            -u ${{ secrets.SNOWFLAKE_USER }} \
+            --password-stdin
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:latest .
+          docker tag ${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Push to Snowflake Registry
+        run: |
+          docker push ${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
