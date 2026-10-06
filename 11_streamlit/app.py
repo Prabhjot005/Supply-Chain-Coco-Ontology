@@ -450,7 +450,9 @@ if prompt := st.chat_input("e.g., What is the OTD for Supplier Acme?"):
                         "role": msg["role"],
                         "content": [{"type": "text", "text": msg["content"]}]
                     })
-                messages_json = json.dumps({"messages": messages}).replace("'", "''")
+                messages_json = json.dumps({"messages": messages})
+                # Escape $$ inside content to prevent breaking the SQL dollar-quoting
+                messages_json = messages_json.replace("$$", "\\$\\$").replace("'", "''")
 
                 result = session.sql(f"""
                     SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(
@@ -461,8 +463,16 @@ if prompt := st.chat_input("e.g., What is the OTD for Supplier Acme?"):
                 """).collect()[0]['RESPONSE']
 
                 response_json = json.loads(result)
+                # Handle both v1 (content at top level) and v2 (content nested) response formats
                 content = response_json.get('content', [])
-                text_parts = [item.get('text', '') for item in content if isinstance(item, dict) and item.get('type') == 'text']
+                if not content and 'message' in response_json:
+                    content = response_json['message'].get('content', [])
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and item.get('type') == 'text' and item.get('text'):
+                        text_parts.append(item['text'])
+                    elif isinstance(item, str):
+                        text_parts.append(item)
                 answer = "\n\n".join(text_parts).strip()
 
                 if not answer:
