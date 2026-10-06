@@ -9,12 +9,29 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import json
+import os
+from snowflake.snowpark import Session
 
 # ============================================================
 # SESSION & PERSONA SETUP
 # ============================================================
-conn = st.connection("snowflake")
-session = conn.session()
+@st.cache_resource
+def get_session():
+    if os.path.exists("/snowflake/session/token"):
+        return Session.builder.configs({
+            "account": os.environ["SNOWFLAKE_ACCOUNT"],
+            "host": os.environ["SNOWFLAKE_HOST"],
+            "authenticator": "oauth",
+            "token": open("/snowflake/session/token").read(),
+            "warehouse": os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH"),
+            "database": os.environ.get("SNOWFLAKE_DATABASE", "SUPPLY_CHAIN_DB"),
+            "schema": os.environ.get("SNOWFLAKE_SCHEMA", "SCM"),
+        }).create()
+    else:
+        from snowflake.snowpark.context import get_active_session
+        return get_active_session()
+
+session = get_session()
 
 def detect_persona():
     role = session.sql("SELECT CURRENT_ROLE()").collect()[0][0]
